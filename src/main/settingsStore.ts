@@ -106,7 +106,21 @@ export function hasApiKey(): boolean {
     return false;
   }
 
-  return true;
+  if (apiKey.mode === 'plaintextFallback') {
+    return true;
+  }
+
+  if (!isEncryptionAvailable()) {
+    return false;
+  }
+
+  try {
+    safeStorage.decryptString(Buffer.from(apiKey.value, 'base64'));
+    return true;
+  } catch {
+    clearMalformedApiKey();
+    return false;
+  }
 }
 
 export function isEncryptionAvailable(): boolean {
