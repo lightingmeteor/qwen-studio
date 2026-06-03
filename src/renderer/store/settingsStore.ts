@@ -10,7 +10,7 @@ interface SettingsState {
   save: (patch: SettingsPatch) => Promise<void>;
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
+export const useSettingsStore = create<SettingsState>((set) => ({
   settings: DEFAULT_SETTINGS,
   hasKey: false,
   loaded: false,
@@ -28,6 +28,5 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       window.qwen.hasApiKey(),
     ]);
     set({ settings, hasKey });
-    void get();
   },
 }));

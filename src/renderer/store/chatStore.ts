@@ -11,6 +11,8 @@ import { useSettingsStore } from './settingsStore';
 
 // Routes streaming events (keyed by requestId) to the right conversation/message.
 const routing = new Map<string, { conversationId: string; messageId: string }>();
+let bridgeInitialized = false;
+const bridgeUnsubscribers: Array<() => void> = [];
 
 interface ChatState {
   conversations: Conversation[];
@@ -31,8 +33,18 @@ interface ChatState {
   // Internal mutations driven by IPC events:
   appendDelta: (conversationId: string, messageId: string, text: string) => void;
   setUsage: (conversationId: string, messageId: string, usage: Usage) => void;
-  finishMessage: (conversationId: string, messageId: string, aborted?: boolean) => void;
-  failMessage: (conversationId: string, messageId: string, message: string) => void;
+  finishMessage: (
+    requestId: string,
+    conversationId: string,
+    messageId: string,
+    aborted?: boolean,
+  ) => void;
+  failMessage: (
+    requestId: string,
+    conversationId: string,
+    messageId: string,
+    message: string,
+  ) => void;
 }
 
 function updateMessages(
@@ -51,7 +63,26 @@ function findConversation(conversations: Conversation[], id: string | null): Con
 
 function persist(conversationId: string, conversations: Conversation[]): void {
   const conv = findConversation(conversations, conversationId);
-  if (conv) void window.qwen.saveMessages(conversationId, conv.messages);
+  if (conv) void window.qwen.saveMessages(conversationId, conv.messages).catch(console.error);
+}
+
+function routesForConversation(
+  conversationId: string,
+): Array<[string, { conversationId: string; messageId: string }]> {
+  return [...routing.entries()].filter(([, route]) => route.conversationId === conversationId);
+}
+
+function abortAndDeleteRoutes(conversationId: string): string[] {
+  const requestIds = routesForConversation(conversationId).map(([requestId]) => requestId);
+  for (const requestId of requestIds) {
+    void window.qwen.abortChat(requestId).catch(console.error);
+    routing.delete(requestId);
+  }
+  return requestIds;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -82,15 +113,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteConversation: async (id) => {
+    const requestIds = abortAndDeleteRoutes(id);
     await window.qwen.deleteConversation(id);
     set((s) => {
       const conversations = s.conversations.filter((c) => c.id !== id);
       const activeId = s.activeId === id ? conversations[0]?.id ?? null : s.activeId;
-      return { conversations, activeId };
+      const streamingRequestId = requestIds.includes(s.streamingRequestId ?? '')
+        ? null
+        : s.streamingRequestId;
+      return { conversations, activeId, streamingRequestId };
     });
   },
 
   sendMessage: async (text) => {
+    if (get().streamingRequestId) return;
+
     const content = text.trim();
     if (!content) return;
 
@@ -146,13 +183,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...history,
     ];
 
-    await window.qwen.chatStream({
-      requestId,
-      conversationId,
-      model: settings.model,
-      temperature: settings.temperature,
-      messages,
-    });
+    try {
+      await window.qwen.chatStream({
+        requestId,
+        conversationId,
+        model: settings.model,
+        temperature: settings.temperature,
+        messages,
+      });
+    } catch (error) {
+      if (routing.delete(requestId)) {
+        get().failMessage(requestId, conversationId, assistantMsg.id, errorMessage(error));
+      }
+    }
   },
 
   abort: async () => {
@@ -161,6 +204,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   regenerate: async (messageId) => {
+    if (get().streamingRequestId) return;
+
     const conversationId = get().activeId;
     if (!conversationId) return;
     const conv = findConversation(get().conversations, conversationId);
@@ -208,19 +253,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  finishMessage: (conversationId, messageId, aborted) => {
+  finishMessage: (requestId, conversationId, messageId, aborted) => {
     set((s) => ({
       conversations: updateMessages(s.conversations, conversationId, (m) =>
         m.map((x) =>
           x.id === messageId ? { ...x, status: 'done', aborted: aborted ?? false } : x,
         ),
       ),
-      streamingRequestId: null,
+      streamingRequestId: s.streamingRequestId === requestId ? null : s.streamingRequestId,
     }));
     persist(conversationId, get().conversations);
   },
 
-  failMessage: (conversationId, messageId, message) => {
+  failMessage: (requestId, conversationId, messageId, message) => {
     set((s) => ({
       conversations: updateMessages(s.conversations, conversationId, (m) =>
         m.map((x) =>
@@ -229,7 +274,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : x,
         ),
       ),
-      streamingRequestId: null,
+      streamingRequestId: s.streamingRequestId === requestId ? null : s.streamingRequestId,
     }));
     persist(conversationId, get().conversations);
   },
@@ -237,26 +282,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 /** Wire IPC stream events to the store. Call once at app startup. */
 export function initChatBridge(): void {
-  window.qwen.onChatDelta((e) => {
-    const r = routing.get(e.requestId);
-    if (r) useChatStore.getState().appendDelta(r.conversationId, r.messageId, e.text);
-  });
-  window.qwen.onChatUsage((e) => {
-    const r = routing.get(e.requestId);
-    if (r) useChatStore.getState().setUsage(r.conversationId, r.messageId, e.usage);
-  });
-  window.qwen.onChatDone((e) => {
-    const r = routing.get(e.requestId);
-    if (r) {
-      useChatStore.getState().finishMessage(r.conversationId, r.messageId, e.aborted);
-      routing.delete(e.requestId);
-    }
-  });
-  window.qwen.onChatError((e) => {
-    const r = routing.get(e.requestId);
-    if (r) {
-      useChatStore.getState().failMessage(r.conversationId, r.messageId, e.message);
-      routing.delete(e.requestId);
-    }
-  });
+  if (bridgeInitialized) return;
+  bridgeInitialized = true;
+
+  bridgeUnsubscribers.push(
+    window.qwen.onChatDelta((e) => {
+      const r = routing.get(e.requestId);
+      if (r) useChatStore.getState().appendDelta(r.conversationId, r.messageId, e.text);
+    }),
+    window.qwen.onChatUsage((e) => {
+      const r = routing.get(e.requestId);
+      if (r) useChatStore.getState().setUsage(r.conversationId, r.messageId, e.usage);
+    }),
+    window.qwen.onChatDone((e) => {
+      const r = routing.get(e.requestId);
+      if (r) {
+        useChatStore.getState().finishMessage(e.requestId, r.conversationId, r.messageId, e.aborted);
+        routing.delete(e.requestId);
+      }
+    }),
+    window.qwen.onChatError((e) => {
+      const r = routing.get(e.requestId);
+      if (r) {
+        useChatStore.getState().failMessage(e.requestId, r.conversationId, r.messageId, e.message);
+        routing.delete(e.requestId);
+      }
+    }),
+  );
 }
