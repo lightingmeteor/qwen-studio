@@ -17,6 +17,10 @@ function frame(content: string): string {
   return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
 }
 
+function crlfFrame(content: string): string {
+  return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\r\n\r\n`;
+}
+
 describe('parseSSEStream', () => {
   it('emits deltas in order', async () => {
     const out: string[] = [];
@@ -44,12 +48,26 @@ describe('parseSSEStream', () => {
     expect(out.join('')).toBe('split');
   });
 
+  it('emits deltas from CRLF-delimited frames', async () => {
+    const out: string[] = [];
+    await parseSSEStream(streamFromChunks([crlfFrame('Hello'), crlfFrame(' CRLF'), 'data: [DONE]\r\n\r\n']), {
+      onDelta: (t) => out.push(t),
+    });
+    expect(out.join('')).toBe('Hello CRLF');
+  });
+
   it('ignores malformed json chunks without throwing', async () => {
     const out: string[] = [];
     await parseSSEStream(streamFromChunks(['data: {not json}\n\n', frame('ok'), 'data: [DONE]\n\n']), {
       onDelta: (t) => out.push(t),
     });
     expect(out.join('')).toBe('ok');
+  });
+
+  it('propagates onDelta handler exceptions', async () => {
+    await expect(parseSSEStream(streamFromChunks([frame('boom'), 'data: [DONE]\n\n']), {
+      onDelta: () => { throw new Error('handler failed'); },
+    })).rejects.toThrow('handler failed');
   });
 
   it('maps usage from snake_case to camelCase', async () => {

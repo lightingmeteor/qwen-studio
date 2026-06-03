@@ -27,6 +27,7 @@ export async function parseSSEStream(
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/g, '\n');
 
     const events = buffer.split('\n\n');
     buffer = events.pop() ?? '';
@@ -36,15 +37,18 @@ export async function parseSSEStream(
       if (!line) continue;
       const data = line.replace(/^data:\s*/, '').trim();
       if (data === '[DONE]') return;
+      let json: { choices?: { delta?: { content?: unknown } }[]; usage?: unknown };
       try {
-        const json = JSON.parse(data);
-        const delta = json?.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta.length > 0) handlers.onDelta(delta);
-        const usage = mapUsage(json?.usage);
-        if (usage && handlers.onUsage) handlers.onUsage(usage);
+        json = JSON.parse(data) as { choices?: { delta?: { content?: unknown } }[]; usage?: unknown };
       } catch {
         // Skip a single malformed chunk rather than aborting the whole stream.
+        continue;
       }
+
+      const delta = json?.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string' && delta.length > 0) handlers.onDelta(delta);
+      const usage = mapUsage(json?.usage);
+      if (usage && handlers.onUsage) handlers.onUsage(usage);
     }
   }
 }
