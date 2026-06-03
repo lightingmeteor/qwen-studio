@@ -7,8 +7,22 @@ const PROMPTS = [
   '给我三个周末适合做的小项目点子',
 ];
 
-export default function WelcomeState(): JSX.Element {
+interface WelcomeStateProps {
+  hasKey: boolean;
+  onOpenSettings: () => void;
+}
+
+export default function WelcomeState({ hasKey, onOpenSettings }: WelcomeStateProps): JSX.Element {
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const choosePrompt = (prompt: string) => {
+    if (!hasKey) {
+      onOpenSettings();
+      return;
+    }
+
+    void sendMessage(prompt);
+  };
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
       <div className="text-2xl font-semibold mb-2">欢迎使用 Qwen Studio Desktop</div>
@@ -17,7 +31,7 @@ export default function WelcomeState(): JSX.Element {
         {PROMPTS.map((p) => (
           <button
             key={p}
-            onClick={() => void sendMessage(p)}
+            onClick={() => choosePrompt(p)}
             className="text-left rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 p-4 text-sm"
           >
             {p}

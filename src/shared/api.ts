@@ -25,6 +25,7 @@ export interface QwenApi {
 
   chatStream(payload: ChatStreamRequest): Promise<void>;
   abortChat(requestId: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
 
   onChatDelta(cb: (e: ChatDeltaEvent) => void): () => void;
   onChatUsage(cb: (e: ChatUsageEvent) => void): () => void;

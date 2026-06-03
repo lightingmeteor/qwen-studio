@@ -41,7 +41,7 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
       )}
 
       {isEmpty ? (
-        <WelcomeState />
+        <WelcomeState hasKey={hasKey} onOpenSettings={onOpenSettings} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {active!.messages.map((m) => (
@@ -51,7 +51,7 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
         </div>
       )}
 
-      <ChatInput />
+      <ChatInput hasKey={hasKey} onOpenSettings={onOpenSettings} />
     </main>
   );
 }

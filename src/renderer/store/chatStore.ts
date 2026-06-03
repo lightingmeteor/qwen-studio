@@ -151,6 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const content = text.trim();
     if (!content) return;
+    if (!useSettingsStore.getState().hasKey) return;
 
     let conversationId = get().activeId;
     if (!conversationId) {

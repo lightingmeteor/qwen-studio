@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import {
   getSettings,
   saveSettings,
@@ -10,6 +10,7 @@ import * as convo from './conversationStore';
 import { defaultProvider } from './llmProvider';
 import type { ChatStreamRequest, ChatMessage } from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
+import { normalizeExternalUrl } from '../shared/externalLinks';
 
 interface StreamControllerEntry {
   senderId: number;
@@ -84,10 +85,12 @@ function validateSettingsPatch(value: unknown): SettingsPatch {
   const patch: SettingsPatch = {};
 
   if (hasOwn(input, 'baseUrl') && input.baseUrl !== undefined) {
-    patch.baseUrl = requireString(input.baseUrl, 'baseUrl');
+    const baseUrl = requireString(input.baseUrl, 'baseUrl').trim();
+    if (baseUrl) patch.baseUrl = baseUrl;
   }
   if (hasOwn(input, 'model') && input.model !== undefined) {
-    patch.model = requireString(input.model, 'model');
+    const model = requireString(input.model, 'model').trim();
+    if (model) patch.model = model;
   }
   if (hasOwn(input, 'systemPrompt') && input.systemPrompt !== undefined) {
     patch.systemPrompt = requireString(input.systemPrompt, 'systemPrompt');
@@ -96,7 +99,8 @@ function validateSettingsPatch(value: unknown): SettingsPatch {
     patch.temperature = requireFiniteNumber(input.temperature, 'temperature');
   }
   if (hasOwn(input, 'apiKey') && input.apiKey !== undefined) {
-    patch.apiKey = requireString(input.apiKey, 'apiKey');
+    const apiKey = requireString(input.apiKey, 'apiKey').trim();
+    if (apiKey) patch.apiKey = apiKey;
   }
 
   return patch;
@@ -229,6 +233,15 @@ export function registerIpc(): void {
     saveSettings(rest);
   });
   ipcMain.handle('settings:hasApiKey', () => hasApiKey());
+
+  ipcMain.handle('shell:openExternal', (_event, rawUrl: unknown) => {
+    const url = normalizeExternalUrl(requireString(rawUrl, 'url'));
+    if (!url) {
+      throw new TypeError('url must be an absolute http(s) URL');
+    }
+
+    return shell.openExternal(url);
+  });
 
   ipcMain.handle('convo:list', () => convo.listConversations());
   ipcMain.handle('convo:create', (_e, rawTitle?: unknown) => {

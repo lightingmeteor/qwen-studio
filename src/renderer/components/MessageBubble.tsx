@@ -17,21 +17,29 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   };
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
-      <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${isUser ? 'bg-sky-600/30' : 'bg-white/5'}`}>
+    <div className={`flex min-w-0 ${isUser ? 'justify-end' : 'justify-start'} group`}>
+      <div
+        className={`min-w-0 max-w-[80%] break-words rounded-2xl px-4 py-3 [overflow-wrap:anywhere] ${
+          isUser ? 'bg-sky-600/30' : 'bg-white/5'
+        }`}
+      >
         <div className="text-xs text-white/40 mb-1">{isUser ? '你' : 'Qwen'}</div>
 
         {message.status === 'error' ? (
-          <div className="text-red-300 text-sm whitespace-pre-wrap">⚠️ {message.error}</div>
+          <div className="text-red-300 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+            ⚠️ {message.error}
+          </div>
         ) : isUser ? (
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
+          <div className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+            {message.content}
+          </div>
         ) : (
           <MarkdownMessage content={message.content || (message.status === 'streaming' ? '▍' : '')} />
         )}
 
         {message.aborted && <div className="text-xs text-white/40 mt-1">（已停止）</div>}
         {message.usage && (
-          <div className="text-xs text-white/30 mt-1">
+          <div className="text-xs text-white/30 mt-1 [overflow-wrap:anywhere]">
             tokens：{message.usage.promptTokens} + {message.usage.completionTokens} ={' '}
             {message.usage.totalTokens}
           </div>

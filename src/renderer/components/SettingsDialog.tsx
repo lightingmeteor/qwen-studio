@@ -17,12 +17,16 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
   }, [settings]);
 
   const onSave = async () => {
+    const trimmedApiKey = apiKey.trim();
+    const trimmedBaseUrl = baseUrl.trim();
+    const trimmedModel = model.trim();
+
     await save({
-      baseUrl,
-      model,
+      ...(trimmedBaseUrl ? { baseUrl: trimmedBaseUrl } : {}),
+      ...(trimmedModel ? { model: trimmedModel } : {}),
       temperature,
       systemPrompt,
-      ...(apiKey ? { apiKey } : {}),
+      ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
     });
     onClose();
   };

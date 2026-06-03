@@ -1,7 +1,12 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useChatStore } from '../store/chatStore';
 
-export default function ChatInput(): JSX.Element {
+interface ChatInputProps {
+  hasKey: boolean;
+  onOpenSettings: () => void;
+}
+
+export default function ChatInput({ hasKey, onOpenSettings }: ChatInputProps): JSX.Element {
   const [text, setText] = useState('');
   const taRef = useRef<HTMLTextAreaElement>(null);
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -18,6 +23,10 @@ export default function ChatInput(): JSX.Element {
   const submit = async () => {
     const value = text;
     if (!value.trim() || streaming) return;
+    if (!hasKey) {
+      onOpenSettings();
+      return;
+    }
     setText('');
     if (taRef.current) taRef.current.style.height = 'auto';
     await sendMessage(value);
@@ -46,7 +55,7 @@ export default function ChatInput(): JSX.Element {
           onKeyDown={onKeyDown}
           rows={1}
           placeholder="给 Qwen 发消息…（Cmd/Ctrl + Enter 发送，Esc 停止）"
-          className="flex-1 resize-none bg-transparent outline-none px-2 py-1 text-sm max-h-[200px]"
+          className="flex-1 min-w-0 resize-none bg-transparent outline-none px-2 py-1 text-sm max-h-[200px]"
         />
         {text && (
           <button
@@ -70,7 +79,7 @@ export default function ChatInput(): JSX.Element {
             disabled={!text.trim()}
             className="px-3 py-1.5 rounded-lg bg-sky-500/90 hover:bg-sky-500 disabled:opacity-40 text-sm"
           >
-            发送
+            {hasKey ? '发送' : '去设置'}
           </button>
         )}
       </div>

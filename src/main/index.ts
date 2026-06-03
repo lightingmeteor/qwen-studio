@@ -1,8 +1,30 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 import { registerIpc } from './ipc';
+import { normalizeExternalUrl } from '../shared/externalLinks';
+
+function openSafeExternal(rawUrl: string): void {
+  const url = normalizeExternalUrl(rawUrl);
+  if (url) void shell.openExternal(url).catch(console.error);
+}
+
+function isExpectedRendererUrl(rawUrl: string, rendererEntryUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const devUrl = process.env['ELECTRON_RENDERER_URL'];
+    if (devUrl) return url.origin === new URL(devUrl).origin;
+
+    const entryUrl = new URL(rendererEntryUrl);
+    return url.protocol === 'file:' && url.pathname === entryUrl.pathname;
+  } catch {
+    return false;
+  }
+}
 
 function createWindow(): void {
+  const rendererEntryUrl = process.env['ELECTRON_RENDERER_URL']
+    ?? pathToFileURL(join(__dirname, '../renderer/index.html')).toString();
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -19,6 +41,16 @@ function createWindow(): void {
   });
 
   mainWindow.on('ready-to-show', () => mainWindow.show());
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isExpectedRendererUrl(url, rendererEntryUrl)) return;
+
+    event.preventDefault();
+    openSafeExternal(url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openSafeExternal(url);
+    return { action: 'deny' };
+  });
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);

@@ -22,6 +22,7 @@ const api: QwenApi = {
 
   chatStream: (payload) => ipcRenderer.invoke('chat:stream', payload),
   abortChat: (requestId) => ipcRenderer.invoke('chat:abort', requestId),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
 
   onChatDelta: subscribe('chat:delta') as QwenApi['onChatDelta'],
   onChatUsage: subscribe('chat:usage') as QwenApi['onChatUsage'],
