@@ -28,7 +28,7 @@ export class QwenApiError extends Error {
 }
 
 export function buildEndpoint(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  return `${baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
 }
 
 export function buildRequestBody(o: {
@@ -82,10 +82,11 @@ export async function streamQwenChat(options: StreamChatOptions): Promise<void> 
     body: JSON.stringify(buildRequestBody({ model, messages, temperature })),
   });
 
-  if (!resp.ok || !resp.body) {
+  if (!resp.ok) {
     const text = await resp.text().catch(() => '');
     throw new QwenApiError(resp.status, text);
   }
+  if (!resp.body) throw new Error('服务没有返回可读取的流，请稍后重试或检查网关配置。');
 
   await parseSSEStream(resp.body, { onDelta, onUsage });
 }
