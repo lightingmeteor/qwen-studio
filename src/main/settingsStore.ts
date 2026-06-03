@@ -4,7 +4,31 @@ import { type AppSettings, DEFAULT_SETTINGS } from '../shared/types';
 
 interface Persisted {
   settings: AppSettings;
-  apiKeyEnc?: string; // base64 of encrypted (or, as fallback, plain) key bytes
+  apiKey?: ApiKeyStorage;
+  apiKeyEnc?: string;
+}
+
+type ApiKeyStorage =
+  | { mode: 'safeStorage'; value: string }
+  | { mode: 'plaintextFallback'; value: string };
+
+function clearLegacyApiKey(): void {
+  store.delete('apiKeyEnc');
+}
+
+function isApiKeyStorage(value: unknown): value is ApiKeyStorage {
+  if (!value || typeof value !== 'object') return false;
+
+  const candidate = value as { mode?: unknown; value?: unknown };
+  return (
+    (candidate.mode === 'safeStorage' || candidate.mode === 'plaintextFallback') &&
+    typeof candidate.value === 'string' &&
+    candidate.value.length > 0
+  );
+}
+
+function clearMalformedApiKey(): void {
+  store.delete('apiKey');
 }
 
 const store = new Store<Persisted>({
@@ -22,36 +46,77 @@ export function saveSettings(patch: Partial<AppSettings>): void {
 
 export function setApiKey(key: string): void {
   if (!key) {
-    store.delete('apiKeyEnc');
+    clearLegacyApiKey();
+    store.delete('apiKey');
     return;
   }
-  if (safeStorage.isEncryptionAvailable()) {
-    store.set('apiKeyEnc', safeStorage.encryptString(key).toString('base64'));
-  } else {
-    // Fallback when OS encryption is unavailable; the UI warns about this.
-    store.set('apiKeyEnc', Buffer.from(key, 'utf-8').toString('base64'));
+
+  clearLegacyApiKey();
+  if (isEncryptionAvailable()) {
+    try {
+      store.set('apiKey', { mode: 'safeStorage', value: safeStorage.encryptString(key).toString('base64') });
+      return;
+    } catch {
+      // Fall through to plaintext fallback; the UI should warn about this.
+    }
   }
+
+  store.set('apiKey', {
+    mode: 'plaintextFallback',
+    value: Buffer.from(key, 'utf-8').toString('base64'),
+  });
 }
 
 export function getApiKey(): string {
-  const enc = store.get('apiKeyEnc');
-  if (!enc) return '';
-  const buf = Buffer.from(enc, 'base64');
-  if (safeStorage.isEncryptionAvailable()) {
-    try {
-      return safeStorage.decryptString(buf);
-    } catch {
-      // Data was written via the plaintext fallback; read it back as utf-8.
-      return buf.toString('utf-8');
-    }
+  clearLegacyApiKey();
+
+  const apiKey = store.get('apiKey');
+  if (!apiKey) return '';
+
+  if (!isApiKeyStorage(apiKey)) {
+    clearMalformedApiKey();
+    return '';
   }
-  return buf.toString('utf-8');
+
+  const buf = Buffer.from(apiKey.value, 'base64');
+  if (apiKey.mode === 'plaintextFallback') {
+    return buf.toString('utf-8');
+  }
+
+  if (!isEncryptionAvailable()) {
+    return '';
+  }
+
+  try {
+    return safeStorage.decryptString(buf);
+  } catch {
+    clearMalformedApiKey();
+    return '';
+  }
 }
 
 export function hasApiKey(): boolean {
-  return !!store.get('apiKeyEnc');
+  clearLegacyApiKey();
+
+  const apiKey = store.get('apiKey');
+  if (!apiKey) return false;
+
+  if (!isApiKeyStorage(apiKey)) {
+    clearMalformedApiKey();
+    return false;
+  }
+
+  return true;
 }
 
 export function isEncryptionAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable();
+  if (!safeStorage.isEncryptionAvailable()) {
+    return false;
+  }
+
+  if (process.platform === 'linux') {
+    return safeStorage.getSelectedStorageBackend() !== 'basic_text';
+  }
+
+  return true;
 }
