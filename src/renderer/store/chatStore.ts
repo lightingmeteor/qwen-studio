@@ -11,8 +11,11 @@ import { useSettingsStore } from './settingsStore';
 
 // Routes streaming events (keyed by requestId) to the right conversation/message.
 const routing = new Map<string, { conversationId: string; messageId: string }>();
-let bridgeInitialized = false;
-const bridgeUnsubscribers: Array<() => void> = [];
+const CHAT_BRIDGE_UNSUBSCRIBERS_KEY = '__qwenStudioChatBridgeUnsubscribers' as const;
+
+type ChatBridgeGlobal = typeof globalThis & {
+  [CHAT_BRIDGE_UNSUBSCRIBERS_KEY]?: Array<() => void>;
+};
 
 interface ChatState {
   conversations: Conversation[];
@@ -83,6 +86,24 @@ function abortAndDeleteRoutes(conversationId: string): string[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function replaceBridgeUnsubscribers(unsubscribers: Array<() => void>): void {
+  (globalThis as ChatBridgeGlobal)[CHAT_BRIDGE_UNSUBSCRIBERS_KEY] = unsubscribers;
+}
+
+function clearBridgeListeners(): void {
+  const chatBridgeGlobal = globalThis as ChatBridgeGlobal;
+  const unsubscribers = chatBridgeGlobal[CHAT_BRIDGE_UNSUBSCRIBERS_KEY] ?? [];
+  chatBridgeGlobal[CHAT_BRIDGE_UNSUBSCRIBERS_KEY] = [];
+
+  for (const unsubscribe of unsubscribers) {
+    try {
+      unsubscribe();
+    } catch (error) {
+      console.error(error);
+    }
+  }
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -282,10 +303,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 /** Wire IPC stream events to the store. Call once at app startup. */
 export function initChatBridge(): void {
-  if (bridgeInitialized) return;
-  bridgeInitialized = true;
+  clearBridgeListeners();
 
-  bridgeUnsubscribers.push(
+  replaceBridgeUnsubscribers([
     window.qwen.onChatDelta((e) => {
       const r = routing.get(e.requestId);
       if (r) useChatStore.getState().appendDelta(r.conversationId, r.messageId, e.text);
@@ -308,5 +328,5 @@ export function initChatBridge(): void {
         routing.delete(e.requestId);
       }
     }),
-  );
+  ]);
 }
