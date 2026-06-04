@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   buildEndpoint,
   buildConnectionTestBody,
+  buildResponsesBaseUrl,
+  buildResponsesEndpoint,
+  buildResponsesRequestBody,
   buildRequestBody,
   friendlyMessage,
   streamQwenChat,
+  streamQwenResponses,
   testQwenConnection,
   QwenApiError,
 } from '../qwenService';
@@ -107,6 +111,74 @@ describe('buildConnectionTestBody', () => {
   });
 });
 
+describe('buildResponsesBaseUrl', () => {
+  it('converts known DashScope chat base URLs to Responses base URLs', () => {
+    expect(buildResponsesBaseUrl('https://dashscope.aliyuncs.com/compatible-mode/v1')).toBe(
+      'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+    );
+    expect(buildResponsesBaseUrl('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(
+      'https://dashscope-intl.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+    );
+    expect(buildResponsesBaseUrl(' https://dashscope-us.aliyuncs.com/compatible-mode/v1/ ')).toBe(
+      'https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+    );
+  });
+
+  it('leaves already-correct Responses base URLs unchanged', () => {
+    expect(
+      buildResponsesBaseUrl(
+        'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/',
+      ),
+    ).toBe('https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1');
+  });
+
+  it('only trims custom URLs and does not inject the DashScope Responses path', () => {
+    expect(buildResponsesBaseUrl(' https://example.com/compatible-mode/v1/ ')).toBe(
+      'https://example.com/compatible-mode/v1',
+    );
+  });
+});
+
+describe('buildResponsesEndpoint', () => {
+  it('appends /responses to the Responses base URL', () => {
+    expect(buildResponsesEndpoint('https://x.com/api/v2/apps/protocols/compatible-mode/v1/')).toBe(
+      'https://x.com/api/v2/apps/protocols/compatible-mode/v1/responses',
+    );
+  });
+});
+
+describe('buildResponsesRequestBody', () => {
+  it('enables streaming and includes optional context and tools', () => {
+    expect(
+      buildResponsesRequestBody({
+        model: 'qwen-plus',
+        input: 'latest qwen news',
+        previousResponseId: 'resp_123',
+        tools: ['web_search'],
+      }),
+    ).toEqual({
+      model: 'qwen-plus',
+      input: 'latest qwen news',
+      stream: true,
+      previous_response_id: 'resp_123',
+      tools: [{ type: 'web_search' }],
+    });
+  });
+
+  it('omits optional Responses fields when they are not provided', () => {
+    expect(
+      buildResponsesRequestBody({
+        model: 'qwen-plus',
+        input: [{ role: 'user', content: 'hello' }],
+      }),
+    ).toEqual({
+      model: 'qwen-plus',
+      input: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    });
+  });
+});
+
 describe('friendlyMessage', () => {
   it('maps auth errors', () => {
     expect(friendlyMessage(401, '')).toContain('API Key');
@@ -115,6 +187,96 @@ describe('friendlyMessage', () => {
   it('maps rate limit and server errors', () => {
     expect(friendlyMessage(429, '')).toContain('频繁');
     expect(friendlyMessage(500, '')).toContain('服务端');
+  });
+});
+
+describe('streamQwenResponses', () => {
+  it('calls fetch with endpoint, auth headers, and request body', async () => {
+    let calledUrl: RequestInfo | URL | undefined;
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calledUrl = url;
+      calledInit = init;
+      return sseResponse('data: [DONE]\n\n');
+    };
+
+    await streamQwenResponses({
+      apiKey: 'k',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+      input: 'hello',
+      previousResponseId: 'resp_prev',
+      tools: ['web_search'],
+      onDelta: () => {},
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(calledUrl).toBe(
+      'https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1/responses',
+    );
+    expect(calledInit).toMatchObject({
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer k',
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(calledInit?.signal).toBeInstanceOf(AbortSignal);
+    expect(JSON.parse(calledInit?.body as string)).toEqual({
+      model: 'qwen-plus',
+      input: 'hello',
+      stream: true,
+      previous_response_id: 'resp_prev',
+      tools: [{ type: 'web_search' }],
+    });
+  });
+
+  it('forwards Responses stream deltas, usage, response id, and tool events', async () => {
+    const deltas: string[] = [];
+    const responseIds: string[] = [];
+    const toolEvents: unknown[] = [];
+    const usages: unknown[] = [];
+    const fetchImpl = async () =>
+      sseResponse(
+        `data: ${JSON.stringify({ type: 'response.web_search_call.in_progress', item_id: 'search_1' })}\n\n` +
+          `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'hi' })}\n\n` +
+          `data: ${JSON.stringify({
+            type: 'response.completed',
+            response: {
+              id: 'resp_123',
+              usage: {
+                input_tokens: 2,
+                output_tokens: 3,
+                total_tokens: 5,
+              },
+            },
+          })}\n\n` +
+          'data: [DONE]\n\n',
+      );
+
+    await streamQwenResponses({
+      apiKey: 'k',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+      input: 'hello',
+      onDelta: (text) => deltas.push(text),
+      onUsage: (usage) => usages.push(usage),
+      onResponseId: (id) => responseIds.push(id),
+      onToolEvent: (event) => toolEvents.push(event),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(deltas).toEqual(['hi']);
+    expect(usages).toEqual([{ promptTokens: 2, completionTokens: 3, totalTokens: 5 }]);
+    expect(responseIds).toEqual(['resp_123']);
+    expect(toolEvents).toEqual([
+      {
+        id: 'search_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+    ]);
   });
 });
 
