@@ -45,7 +45,6 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
     }
 
     if (result.canceled) {
-      setExportStatus({ tone: 'muted', text: '已取消导出' });
       return;
     }
 
