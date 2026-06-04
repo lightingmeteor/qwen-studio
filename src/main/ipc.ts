@@ -134,6 +134,12 @@ function validateSettingsPatch(value: unknown): SettingsPatch {
   if (hasOwn(input, 'temperature') && input.temperature !== undefined) {
     patch.temperature = requireFiniteNumber(input.temperature, 'temperature');
   }
+  if (hasOwn(input, 'apiMode') && input.apiMode !== undefined) {
+    patch.apiMode = validateApiMode(input.apiMode, 'apiMode');
+  }
+  if (hasOwn(input, 'webSearchEnabled') && input.webSearchEnabled !== undefined) {
+    patch.webSearchEnabled = requireBoolean(input.webSearchEnabled, 'webSearchEnabled');
+  }
   if (hasOwn(input, 'apiKey') && input.apiKey !== undefined) {
     const apiKey = requireString(input.apiKey, 'apiKey').trim();
     if (apiKey) patch.apiKey = apiKey;

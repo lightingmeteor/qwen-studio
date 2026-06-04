@@ -244,6 +244,43 @@ describe('conversation IPC handlers', () => {
   });
 });
 
+describe('settings IPC handler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('forwards API mode and web search settings when saving settings', async () => {
+    await importIpc();
+
+    handlers.get('settings:save')?.({}, {
+      apiMode: 'responses',
+      webSearchEnabled: true,
+    });
+
+    expect(settingsMock.saveSettings).toHaveBeenCalledWith({
+      apiMode: 'responses',
+      webSearchEnabled: true,
+    });
+  });
+
+  it('rejects invalid API mode and web search values before saving settings', async () => {
+    await importIpc();
+
+    expect(() =>
+      handlers.get('settings:save')?.({}, {
+        apiMode: 'unknown',
+      }),
+    ).toThrow('apiMode must be chat_completions or responses');
+    expect(() =>
+      handlers.get('settings:save')?.({}, {
+        webSearchEnabled: 'true',
+      }),
+    ).toThrow('webSearchEnabled must be a boolean');
+    expect(settingsMock.saveSettings).not.toHaveBeenCalled();
+    expect(settingsMock.setApiKey).not.toHaveBeenCalled();
+  });
+});
+
 describe('diagnostic IPC handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
