@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder",
-    "dist:win": "electron-vite build && electron-builder --win --x64"
+    "dist:win": "electron-vite build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "electron-store": "^8.2.0"
