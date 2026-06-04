@@ -50,6 +50,10 @@ const qwenServiceMock = vi.hoisted(() => ({
   })),
 }));
 
+const llmProviderMock = vi.hoisted(() => ({
+  streamChat: vi.fn(),
+}));
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: Handler) => {
@@ -66,9 +70,7 @@ vi.mock('../settingsStore', () => settingsMock);
 vi.mock('../conversationStore', () => convoMock);
 vi.mock('../conversationExport', () => exportMock);
 vi.mock('../llmProvider', () => ({
-  defaultProvider: {
-    streamChat: vi.fn(),
-  },
+  defaultProvider: llmProviderMock,
 }));
 vi.mock('../qwenService', () => qwenServiceMock);
 
@@ -95,6 +97,7 @@ describe('conversation IPC handlers', () => {
       category: 'ok',
       message: 'Connection test succeeded.',
     });
+    llmProviderMock.streamChat.mockReset();
   });
 
   it('registers handlers for pinning, archiving, and exporting conversations', async () => {
@@ -126,8 +129,9 @@ describe('conversation IPC handlers', () => {
     );
   });
 
-  it('preserves errorDetail while validating saveMessages payloads', async () => {
+  it('sanitizes errorDetail while validating saveMessages payloads', async () => {
     await importIpc();
+    const secret = 'sk-' + 'a'.repeat(64);
     const messages: ChatMessage[] = [
       {
         id: 'm1',
@@ -136,13 +140,16 @@ describe('conversation IPC handlers', () => {
         createdAt: 100,
         status: 'error',
         error: 'Friendly error',
-        errorDetail: 'HTTP 500 body',
+        errorDetail: `HTTP 500 Authorization: Bearer ${secret} ${'x'.repeat(1200)}`,
       },
     ];
 
     await handlers.get('convo:saveMessages')?.({}, 'c1', messages);
 
-    expect(convoMock.saveMessages).toHaveBeenCalledWith('c1', messages);
+    const savedMessages = (convoMock.saveMessages.mock.calls[0] as unknown[])[1] as ChatMessage[];
+    expect(savedMessages[0].errorDetail).toContain('Authorization: [REDACTED]');
+    expect(savedMessages[0].errorDetail).not.toContain(secret);
+    expect(savedMessages[0].errorDetail?.length).toBeLessThanOrEqual(1000);
   });
 
   it('exports by looking up conversations in main and never accepting renderer output paths', async () => {
@@ -177,6 +184,7 @@ describe('diagnostic IPC handler', () => {
       category: 'ok',
       message: 'Connection test succeeded.',
     });
+    llmProviderMock.streamChat.mockReset();
   });
 
   it('returns missing_key without calling the network when no saved or temporary key exists', async () => {
@@ -229,5 +237,91 @@ describe('diagnostic IPC handler', () => {
     );
     expect(settingsMock.setApiKey).not.toHaveBeenCalled();
     expect(settingsMock.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('refuses to test a changed base URL with the saved API key', async () => {
+    await importIpc();
+
+    await expect(
+      handlers.get('diagnostics:testConnection')?.({}, {
+        baseUrl: 'https://attacker.example/v1',
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'config',
+    });
+
+    expect(qwenServiceMock.testQwenConnection).not.toHaveBeenCalled();
+  });
+
+  it('allows testing a changed model on the saved base URL with the saved API key', async () => {
+    await importIpc();
+
+    await expect(
+      handlers.get('diagnostics:testConnection')?.({}, {
+        model: 'qwen-max',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      category: 'ok',
+    });
+
+    expect(qwenServiceMock.testQwenConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'sk-test',
+        baseUrl: 'https://example.com/v1',
+        model: 'qwen-max',
+      }),
+    );
+  });
+});
+
+describe('chat IPC errors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settingsMock.getSettings.mockReturnValue({
+      baseUrl: 'https://example.com/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: '',
+    });
+    settingsMock.getApiKey.mockReturnValue('sk-test');
+    llmProviderMock.streamChat.mockReset();
+  });
+
+  it('sanitizes technical details before sending chat errors to the renderer', async () => {
+    const secret = 'sk-' + 'a'.repeat(64);
+    const error = new Error('Friendly failure') as Error & { detail: string };
+    error.detail = `Authorization: Bearer ${secret} ${'x'.repeat(1200)}`;
+    llmProviderMock.streamChat.mockRejectedValue(error);
+    const sender = {
+      id: 1,
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+    };
+    await importIpc();
+
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-1',
+        conversationId: 'c1',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(sender.send).toHaveBeenCalledWith(
+      'chat:error',
+      expect.objectContaining({
+        requestId: 'req-1',
+        message: 'Friendly failure',
+        detail: expect.stringContaining('Authorization: [REDACTED]'),
+      }),
+    );
+    const payload = sender.send.mock.calls[0][1] as { detail: string };
+    expect(payload.detail).not.toContain(secret);
+    expect(payload.detail.length).toBeLessThanOrEqual(1000);
   });
 });

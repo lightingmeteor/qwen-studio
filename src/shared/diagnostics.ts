@@ -1,12 +1,40 @@
 import type { ConnectionDiagnostic } from './types';
 
+const DEFAULT_DETAIL_MAX_LENGTH = 1_000;
+const TRUNCATED_SUFFIX = ' [truncated]';
+
+export function sanitizeDiagnosticDetail(
+  value: unknown,
+  maxLength = DEFAULT_DETAIL_MAX_LENGTH,
+): string | undefined {
+  const detail = detailFromUnknown(value);
+  if (detail === undefined) {
+    return undefined;
+  }
+
+  const redacted = redactSecrets(detail);
+  if (redacted.length <= maxLength) {
+    return redacted;
+  }
+
+  if (maxLength <= 0) {
+    return '';
+  }
+
+  if (maxLength <= TRUNCATED_SUFFIX.length) {
+    return redacted.slice(0, maxLength);
+  }
+
+  return `${redacted.slice(0, maxLength - TRUNCATED_SUFFIX.length)}${TRUNCATED_SUFFIX}`;
+}
+
 export function diagnosticFromStatus(status: number, body?: unknown): ConnectionDiagnostic {
   if (status === 401 || status === 403) {
     return {
       ok: false,
       category: 'auth',
       message: 'Authentication failed. Check the API key.',
-      detail: detailFromUnknown(body),
+      detail: sanitizeDiagnosticDetail(body),
     };
   }
 
@@ -15,7 +43,7 @@ export function diagnosticFromStatus(status: number, body?: unknown): Connection
       ok: false,
       category: 'region_or_model',
       message: 'The Base URL, region, or model name does not look valid for this request.',
-      detail: detailFromUnknown(body),
+      detail: sanitizeDiagnosticDetail(body),
     };
   }
 
@@ -23,7 +51,7 @@ export function diagnosticFromStatus(status: number, body?: unknown): Connection
     ok: false,
     category: 'unknown',
     message: `Connection test failed with HTTP ${status}.`,
-    detail: detailFromUnknown(body),
+    detail: sanitizeDiagnosticDetail(body),
   };
 }
 
@@ -38,7 +66,7 @@ export function classifyDiagnosticError(error: unknown): ConnectionDiagnostic {
       ok: false,
       category: 'timeout',
       message: 'The connection test timed out.',
-      detail: detailFromUnknown(error),
+      detail: sanitizeDiagnosticDetail(error),
     };
   }
 
@@ -47,7 +75,7 @@ export function classifyDiagnosticError(error: unknown): ConnectionDiagnostic {
       ok: false,
       category: 'network',
       message: 'A network error prevented the connection test from completing.',
-      detail: detailFromUnknown(error),
+      detail: sanitizeDiagnosticDetail(error),
     };
   }
 
@@ -55,7 +83,7 @@ export function classifyDiagnosticError(error: unknown): ConnectionDiagnostic {
     ok: false,
     category: 'unknown',
     message: 'The connection test failed unexpectedly.',
-    detail: detailFromUnknown(error),
+    detail: sanitizeDiagnosticDetail(error),
   };
 }
 
@@ -113,6 +141,14 @@ function detailFromUnknown(value: unknown): string | undefined {
   } catch {
     return String(value);
   }
+}
+
+function redactSecrets(value: string): string {
+  return value
+    .replace(/("(?:api_key|apiKey)"\s*:\s*)"[^"]*"/g, '$1"[REDACTED]"')
+    .replace(/(\bapi[_-]?key\b\s*[:=]\s*)([^\s,;&"'}]+)/gi, '$1[REDACTED]')
+    .replace(/(\bauthorization\s*[:=]\s*)(bearer\s+)?[^,"'}\n\r]+/gi, '$1[REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

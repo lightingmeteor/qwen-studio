@@ -1,5 +1,9 @@
 import type { ChatRole, ConnectionDiagnostic, Usage } from '../shared/types';
-import { classifyDiagnosticError, diagnosticFromStatus } from '../shared/diagnostics';
+import {
+  classifyDiagnosticError,
+  diagnosticFromStatus,
+  sanitizeDiagnosticDetail,
+} from '../shared/diagnostics';
 import { parseSSEStream } from './sse';
 
 export interface QwenMessage {
@@ -40,7 +44,7 @@ export class QwenApiError extends Error {
     this.name = 'QwenApiError';
     this.status = status;
     this.body = body;
-    this.detail = `HTTP ${status}${body ? `: ${truncate(body, 1_000)}` : ''}`;
+    this.detail = sanitizeDiagnosticDetail(`HTTP ${status}${body ? `: ${body}` : ''}`) ?? `HTTP ${status}`;
   }
 }
 
@@ -77,12 +81,14 @@ function truncate(s: string, n = 200): string {
 }
 
 export function friendlyMessage(status: number, body: string): string {
+  const safeBody = sanitizeDiagnosticDetail(body, 200) ?? '';
+
   if (status === 401 || status === 403) return 'API Key 无效或无权限，请检查设置里的 API Key。';
   if (status === 404) return '接口或模型不存在，请检查 Base URL 和模型名。';
-  if (status === 400) return `请求被拒绝（400），可能是模型名或参数有误。${truncate(body)}`;
+  if (status === 400) return `请求被拒绝（400），可能是模型名或参数有误。${truncate(safeBody)}`;
   if (status === 429) return '请求过于频繁或额度不足（429），请稍后再试。';
   if (status >= 500) return `服务端错误（${status}），请稍后再试。`;
-  return `请求失败（${status}）。${truncate(body)}`;
+  return `请求失败（${status}）。${truncate(safeBody)}`;
 }
 
 function isAbortError(error: unknown): boolean {

@@ -174,6 +174,31 @@ describe('streamQwenChat', () => {
     ).rejects.toBeInstanceOf(QwenApiError);
   });
 
+  it('sanitizes and caps QwenApiError technical detail', async () => {
+    const secret = 'sk-' + 'a'.repeat(64);
+    const fetchImpl = async () =>
+      new Response(`Authorization: Bearer ${secret}\n${'x'.repeat(2000)}`, { status: 400 });
+
+    let thrown: unknown;
+    try {
+      await streamQwenChat({
+        apiKey: 'k',
+        baseUrl: 'https://x.com/v1',
+        model: 'qwen-plus',
+        messages: [],
+        onDelta: () => {},
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(QwenApiError);
+    expect((thrown as QwenApiError).detail.length).toBeLessThanOrEqual(1000);
+    expect((thrown as QwenApiError).detail).toContain('Authorization: [REDACTED]');
+    expect((thrown as QwenApiError).detail).not.toContain(secret);
+  });
+
   it('throws a readable-stream error on ok response without body', async () => {
     const fetchImpl = async () => new Response(null, { status: 200 });
     let thrown: unknown;

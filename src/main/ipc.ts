@@ -20,6 +20,7 @@ import {
 } from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
 import { normalizeExternalUrl } from '../shared/externalLinks';
+import { sanitizeDiagnosticDetail } from '../shared/diagnostics';
 
 interface StreamControllerEntry {
   senderId: number;
@@ -170,7 +171,9 @@ function validateChatMessage(value: unknown, field: string): ChatMessage {
     message.error = requireString(input.error, `${field}.error`);
   }
   if (hasOwn(input, 'errorDetail') && input.errorDetail !== undefined) {
-    message.errorDetail = requireString(input.errorDetail, `${field}.errorDetail`);
+    message.errorDetail = sanitizeDiagnosticDetail(
+      requireString(input.errorDetail, `${field}.errorDetail`),
+    );
   }
   if (hasOwn(input, 'usage') && input.usage !== undefined) {
     message.usage = validateUsage(input.usage, `${field}.usage`);
@@ -248,7 +251,11 @@ function safeSend(sender: WebContents, channel: string, payload: unknown): void 
 
 function detailFromError(error: unknown): string | undefined {
   if (!isRecord(error)) return undefined;
-  return typeof error.detail === 'string' ? error.detail : undefined;
+  return typeof error.detail === 'string' ? sanitizeDiagnosticDetail(error.detail) : undefined;
+}
+
+function isDifferentBaseUrl(candidate: string | undefined, saved: string): boolean {
+  return candidate !== undefined && candidate.trim() !== saved.trim();
 }
 
 export function registerIpc(): void {
@@ -264,8 +271,18 @@ export function registerIpc(): void {
   ipcMain.handle('settings:hasApiKey', () => hasApiKey());
   ipcMain.handle('diagnostics:testConnection', async (_event, rawPatch?: unknown) => {
     const { apiKey: patchApiKey, ...settingsPatch } = validateOptionalSettingsPatch(rawPatch);
-    const settings = { ...getSettings(), ...settingsPatch };
+    const savedSettings = getSettings();
+    const settings = { ...savedSettings, ...settingsPatch };
+    const hasTemporaryApiKey = typeof patchApiKey === 'string' && patchApiKey.length > 0;
     const apiKey = (patchApiKey ?? getApiKey()).trim();
+
+    if (isDifferentBaseUrl(settingsPatch.baseUrl, savedSettings.baseUrl) && !hasTemporaryApiKey) {
+      return {
+        ok: false,
+        category: 'config',
+        message: 'Testing an unsaved Base URL requires a temporary API key.',
+      };
+    }
 
     if (!apiKey) {
       return {
@@ -280,7 +297,7 @@ export function registerIpc(): void {
         ok: false,
         category: 'config',
         message: 'Base URL still contains an unresolved template placeholder.',
-        detail: settings.baseUrl,
+        detail: sanitizeDiagnosticDetail(settings.baseUrl),
       };
     }
 
