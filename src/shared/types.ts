@@ -1,5 +1,9 @@
 export type ChatRole = 'system' | 'user' | 'assistant';
 
+export type ApiMode = 'chat_completions' | 'responses';
+
+export type BuiltInTool = 'web_search';
+
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
@@ -7,6 +11,14 @@ export interface Usage {
 }
 
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error';
+
+export interface ToolEvent {
+  id: string;
+  type: BuiltInTool;
+  status: 'started' | 'completed' | 'failed';
+  title: string;
+  detail?: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -18,6 +30,9 @@ export interface ChatMessage {
   error?: string;
   errorDetail?: string;
   usage?: Usage;
+  provider?: ApiMode;
+  providerResponseId?: string;
+  toolEvents?: ToolEvent[];
 }
 
 export interface Conversation {
@@ -52,6 +67,8 @@ export interface AppSettings {
   model: string;
   temperature: number;
   systemPrompt: string;
+  apiMode: ApiMode;
+  webSearchEnabled: boolean;
 }
 
 export interface ChatStreamRequest {
@@ -60,10 +77,15 @@ export interface ChatStreamRequest {
   model?: string;
   temperature?: number;
   messages: { role: ChatRole; content: string }[];
+  apiMode?: ApiMode;
+  tools?: BuiltInTool[];
+  previousResponseId?: string;
 }
 
 export interface ChatDeltaEvent { requestId: string; text: string; }
 export interface ChatUsageEvent { requestId: string; usage: Usage; }
+export interface ChatResponseEvent { requestId: string; responseId: string; }
+export interface ChatToolEvent { requestId: string; event: ToolEvent; }
 export interface ChatDoneEvent { requestId: string; aborted?: boolean; }
 export interface ChatErrorEvent { requestId: string; message: string; detail?: string; }
 
@@ -121,6 +143,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   model: 'qwen-plus',
   temperature: 0.7,
   systemPrompt: 'You are Qwen, a helpful assistant.',
+  apiMode: 'chat_completions',
+  webSearchEnabled: false,
 };
 
 export const MODEL_PRESETS = [
