@@ -124,6 +124,7 @@ function statusFromResponsesEvent(eventType: string, status?: string): ToolEvent
     status === 'in_progress' ||
     status === 'searching' ||
     eventType.endsWith('.in_progress') ||
+    eventType.endsWith('.searching') ||
     eventType.endsWith('.added')
   ) {
     return 'started';

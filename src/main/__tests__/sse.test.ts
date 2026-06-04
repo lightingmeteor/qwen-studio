@@ -205,6 +205,50 @@ describe('parseResponsesStream', () => {
     ]);
   });
 
+  it('emits web_search tool events in order for the full call sequence', async () => {
+    const toolEvents: ToolEvent[] = [];
+    const frames = [
+      {
+        type: 'response.web_search_call.in_progress',
+        item_id: 'ws_1',
+      },
+      {
+        type: 'response.web_search_call.searching',
+        item_id: 'ws_1',
+      },
+      {
+        type: 'response.web_search_call.completed',
+        item_id: 'ws_1',
+      },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`);
+
+    await parseResponsesStream(streamFromChunks([...frames, 'data: [DONE]\n\n']), {
+      onDelta: () => {},
+      onToolEvent: (event) => toolEvents.push(event),
+    });
+
+    expect(toolEvents).toEqual([
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'completed',
+        title: 'Web search',
+      },
+    ]);
+  });
+
   it('skips malformed json chunks and counts unknown events as activity', async () => {
     const out: string[] = [];
     let activityCount = 0;
