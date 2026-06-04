@@ -16,6 +16,7 @@ export interface ChatMessage {
   status?: MessageStatus;
   aborted?: boolean;
   error?: string;
+  errorDetail?: string;
   usage?: Usage;
 }
 
@@ -25,6 +26,25 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export interface UsageSummary extends Usage {
+  messageCount: number;
+}
+
+export interface ConversationExport {
+  version: 1;
+  exportedAt: number;
+  conversations: Conversation[];
+}
+
+export interface ExportResult {
+  canceled: boolean;
+  filePath?: string;
+  error?: string;
+  detail?: string;
 }
 
 export interface AppSettings {
@@ -45,7 +65,24 @@ export interface ChatStreamRequest {
 export interface ChatDeltaEvent { requestId: string; text: string; }
 export interface ChatUsageEvent { requestId: string; usage: Usage; }
 export interface ChatDoneEvent { requestId: string; aborted?: boolean; }
-export interface ChatErrorEvent { requestId: string; message: string; }
+export interface ChatErrorEvent { requestId: string; message: string; detail?: string; }
+
+export type DiagnosticCategory =
+  | 'ok'
+  | 'missing_key'
+  | 'auth'
+  | 'region_or_model'
+  | 'network'
+  | 'timeout'
+  | 'config'
+  | 'unknown';
+
+export interface ConnectionDiagnostic {
+  ok: boolean;
+  category: DiagnosticCategory;
+  message: string;
+  detail?: string;
+}
 
 export interface BaseUrlPreset {
   label: string;
