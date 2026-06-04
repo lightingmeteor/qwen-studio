@@ -2,6 +2,56 @@
 
 一个面向日常使用的 Qwen 桌面聊天客户端。你可以把它理解成一个本地版的 Qwen Studio：在电脑上配置自己的 DashScope / 阿里云百炼 API Key，然后用 Qwen 模型进行流式对话、保存本地会话历史、阅读 Markdown 回复和管理多个聊天。
 
+## 直接安装使用
+
+如果你只是想使用产品，不需要自己运行生产构建。拿到发布包后，直接安装并启动应用即可。
+
+当前本地已生成的 macOS Apple Silicon 发布包：
+
+- `release/Qwen Studio Desktop-0.1.0-arm64.dmg`
+- `release/mac-arm64/Qwen Studio Desktop.app`
+
+Windows 使用方式：
+
+1. 下载 Windows 安装包 `Qwen Studio Desktop Setup 0.1.0.exe`。
+2. 双击运行安装包。
+3. 按安装向导完成安装，然后从开始菜单或桌面快捷方式打开 `Qwen Studio Desktop`。
+4. 如果 Windows Defender SmartScreen 提示应用发布者未知，确认安装包来源可信后，点击「更多信息」->「仍要运行」。
+5. 首次启动后，在设置窗口填写 DashScope / 阿里云百炼 API Key，选择 Key 对应的地域 / Base URL，并保存。
+
+> 注意：当前仓库本地只生成了 macOS Apple Silicon 发布包。如果要给 Windows 用户提供同样的可安装方式，需要发布方先在 Windows 机器或 CI 中执行打包，生成 `.exe` 安装包后再分发给用户。
+
+发布方生成 Windows 安装包：
+
+```powershell
+npm install
+npm run dist
+```
+
+打包完成后，Windows 安装包通常会生成在 `release/` 目录，例如 `release/Qwen Studio Desktop Setup 0.1.0.exe`；免安装目录通常是 `release/win-unpacked/`。建议在 Windows 机器上执行打包命令。
+
+Windows 开发者从源码运行：
+
+```powershell
+git clone <repo-url>
+cd qwen-studio
+npm install
+npm run dev
+```
+
+macOS 使用方式：
+
+1. 双击打开 `release/Qwen Studio Desktop-0.1.0-arm64.dmg`。
+2. 将 `Qwen Studio Desktop.app` 拖到「应用程序」目录。
+3. 打开「应用程序」中的 `Qwen Studio Desktop`。
+4. 如果 macOS 提示应用来自未认证开发者，右键应用选择「打开」，或到「系统设置」->「隐私与安全性」中允许打开。
+
+本地调试时，也可以直接打开已生成的 `.app`：
+
+```bash
+open "release/mac-arm64/Qwen Studio Desktop.app"
+```
+
 ## 已实现功能
 
 - 多会话聊天：左侧会话列表支持新建、切换、重命名和删除。
