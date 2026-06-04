@@ -11,7 +11,9 @@ export default function ChatInput({ hasKey, onOpenSettings }: ChatInputProps): J
   const taRef = useRef<HTMLTextAreaElement>(null);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const abort = useChatStore((s) => s.abort);
-  const streaming = useChatStore((s) => s.streamingRequestId !== null);
+  const streaming = useChatStore((s) =>
+    s.activeId ? Boolean(s.streamingByConversation[s.activeId]) : false,
+  );
 
   const autosize = () => {
     const ta = taRef.current;

@@ -1,5 +1,9 @@
 export type ChatRole = 'system' | 'user' | 'assistant';
 
+export type ApiMode = 'chat_completions' | 'responses';
+
+export type BuiltInTool = 'web_search';
+
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
@@ -7,6 +11,14 @@ export interface Usage {
 }
 
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error';
+
+export interface ToolEvent {
+  id: string;
+  type: BuiltInTool;
+  status: 'started' | 'completed' | 'failed';
+  title: string;
+  detail?: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -16,7 +28,11 @@ export interface ChatMessage {
   status?: MessageStatus;
   aborted?: boolean;
   error?: string;
+  errorDetail?: string;
   usage?: Usage;
+  provider?: ApiMode;
+  providerResponseId?: string;
+  toolEvents?: ToolEvent[];
 }
 
 export interface Conversation {
@@ -25,6 +41,25 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export interface UsageSummary extends Usage {
+  messageCount: number;
+}
+
+export interface ConversationExport {
+  version: 1;
+  exportedAt: number;
+  conversations: Conversation[];
+}
+
+export interface ExportResult {
+  canceled: boolean;
+  filePath?: string;
+  error?: string;
+  detail?: string;
 }
 
 export interface AppSettings {
@@ -32,6 +67,8 @@ export interface AppSettings {
   model: string;
   temperature: number;
   systemPrompt: string;
+  apiMode: ApiMode;
+  webSearchEnabled: boolean;
 }
 
 export interface ChatStreamRequest {
@@ -40,12 +77,34 @@ export interface ChatStreamRequest {
   model?: string;
   temperature?: number;
   messages: { role: ChatRole; content: string }[];
+  apiMode?: ApiMode;
+  tools?: BuiltInTool[];
+  previousResponseId?: string;
 }
 
 export interface ChatDeltaEvent { requestId: string; text: string; }
 export interface ChatUsageEvent { requestId: string; usage: Usage; }
+export interface ChatResponseEvent { requestId: string; responseId: string; }
+export interface ChatToolEvent { requestId: string; event: ToolEvent; }
 export interface ChatDoneEvent { requestId: string; aborted?: boolean; }
-export interface ChatErrorEvent { requestId: string; message: string; }
+export interface ChatErrorEvent { requestId: string; message: string; detail?: string; }
+
+export type DiagnosticCategory =
+  | 'ok'
+  | 'missing_key'
+  | 'auth'
+  | 'region_or_model'
+  | 'network'
+  | 'timeout'
+  | 'config'
+  | 'unknown';
+
+export interface ConnectionDiagnostic {
+  ok: boolean;
+  category: DiagnosticCategory;
+  message: string;
+  detail?: string;
+}
 
 export interface BaseUrlPreset {
   label: string;
@@ -69,13 +128,30 @@ export const BASE_URL_PRESETS = [
     label: 'Hong Kong China',
     baseUrl: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
   },
+  {
+    label: 'Germany Frankfurt',
+    baseUrl: 'https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+  },
 ] as const satisfies readonly BaseUrlPreset[];
+
+export function hasUnresolvedBaseUrlTemplate(baseUrl: string): boolean {
+  return /\{[^}]+\}/.test(baseUrl);
+}
 
 export const DEFAULT_SETTINGS: AppSettings = {
   baseUrl: BASE_URL_PRESETS[0].baseUrl,
   model: 'qwen-plus',
   temperature: 0.7,
   systemPrompt: 'You are Qwen, a helpful assistant.',
+  apiMode: 'chat_completions',
+  webSearchEnabled: false,
 };
 
-export const MODEL_PRESETS = ['qwen-plus', 'qwen-turbo', 'qwen-max'] as const;
+export const MODEL_PRESETS = [
+  'qwen-plus',
+  'qwen3.5-plus',
+  'qwen-flash',
+  'qwen-max',
+  'qwen-coder',
+  'qwen-turbo',
+] as const;

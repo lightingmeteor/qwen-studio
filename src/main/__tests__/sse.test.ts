@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseSSEStream } from '../sse';
-import type { Usage } from '../../shared/types';
+import {
+  parseChatCompletionsStream,
+  parseResponsesStream,
+  parseSSEDataStream,
+  parseSSEStream,
+} from '../sse';
+import type { ApiMode, BuiltInTool, ToolEvent, Usage } from '../../shared/types';
 
 function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -91,5 +96,185 @@ describe('parseSSEStream', () => {
     });
 
     expect(activityCount).toBe(3);
+  });
+});
+
+describe('parseSSEDataStream', () => {
+  it('joins multiple data lines for one event', async () => {
+    const data: string[] = [];
+    await parseSSEDataStream(streamFromChunks(['data: first\ndata: second\n\n', 'data: [DONE]\n\n']), {
+      onData: (value) => data.push(value),
+    });
+
+    expect(data).toEqual(['first\nsecond']);
+  });
+
+  it('stops at [DONE] and ignores later frames', async () => {
+    const data: string[] = [];
+    await parseSSEDataStream(streamFromChunks(['data: before\n\n', 'data: [DONE]\n\n', 'data: after\n\n']), {
+      onData: (value) => data.push(value),
+    });
+
+    expect(data).toEqual(['before']);
+  });
+});
+
+describe('parseChatCompletionsStream', () => {
+  it('keeps existing delta and usage mapping', async () => {
+    const out: string[] = [];
+    let usage: Usage | undefined;
+    const usageFrame = `data: ${JSON.stringify({
+      choices: [{ delta: { content: '!' } }],
+      usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 },
+    })}\n\n`;
+
+    await parseChatCompletionsStream(streamFromChunks([frame('Hello'), usageFrame, 'data: [DONE]\n\n']), {
+      onDelta: (t) => out.push(t),
+      onUsage: (u) => { usage = u; },
+    });
+
+    expect(out.join('')).toBe('Hello!');
+    expect(usage).toEqual({ promptTokens: 3, completionTokens: 5, totalTokens: 8 });
+  });
+
+  it('skips malformed json chunks', async () => {
+    const out: string[] = [];
+    await parseChatCompletionsStream(streamFromChunks(['data: {not json}\n\n', frame('ok'), 'data: [DONE]\n\n']), {
+      onDelta: (t) => out.push(t),
+    });
+
+    expect(out.join('')).toBe('ok');
+  });
+});
+
+describe('parseResponsesStream', () => {
+  it('emits text deltas from response.output_text.delta events', async () => {
+    const out: string[] = [];
+    const responseFrame = `data: ${JSON.stringify({
+      type: 'response.output_text.delta',
+      delta: 'Hello responses',
+    })}\n\n`;
+
+    await parseResponsesStream(streamFromChunks([responseFrame, 'data: [DONE]\n\n']), {
+      onDelta: (text) => out.push(text),
+    });
+
+    expect(out).toEqual(['Hello responses']);
+  });
+
+  it('emits response id and usage from response.completed events', async () => {
+    let responseId: string | undefined;
+    let usage: Usage | undefined;
+    const responseFrame = `data: ${JSON.stringify({
+      type: 'response.completed',
+      response: {
+        id: 'resp_123',
+        usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 },
+      },
+    })}\n\n`;
+
+    await parseResponsesStream(streamFromChunks([responseFrame, 'data: [DONE]\n\n']), {
+      onDelta: () => {},
+      onResponseId: (id) => { responseId = id; },
+      onUsage: (u) => { usage = u; },
+    });
+
+    expect(responseId).toBe('resp_123');
+    expect(usage).toEqual({ promptTokens: 4, completionTokens: 6, totalTokens: 10 });
+  });
+
+  it('emits web_search tool events from response web search call events', async () => {
+    const toolEvents: ToolEvent[] = [];
+    const responseFrame = `data: ${JSON.stringify({
+      type: 'response.web_search_call.in_progress',
+      item_id: 'ws_1',
+    })}\n\n`;
+
+    await parseResponsesStream(streamFromChunks([responseFrame, 'data: [DONE]\n\n']), {
+      onDelta: () => {},
+      onToolEvent: (event) => toolEvents.push(event),
+    });
+
+    expect(toolEvents).toEqual([
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+    ]);
+  });
+
+  it('emits web_search tool events in order for the full call sequence', async () => {
+    const toolEvents: ToolEvent[] = [];
+    const frames = [
+      {
+        type: 'response.web_search_call.in_progress',
+        item_id: 'ws_1',
+      },
+      {
+        type: 'response.web_search_call.searching',
+        item_id: 'ws_1',
+      },
+      {
+        type: 'response.web_search_call.completed',
+        item_id: 'ws_1',
+      },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`);
+
+    await parseResponsesStream(streamFromChunks([...frames, 'data: [DONE]\n\n']), {
+      onDelta: () => {},
+      onToolEvent: (event) => toolEvents.push(event),
+    });
+
+    expect(toolEvents).toEqual([
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'started',
+        title: 'Web search',
+      },
+      {
+        id: 'ws_1',
+        type: 'web_search',
+        status: 'completed',
+        title: 'Web search',
+      },
+    ]);
+  });
+
+  it('skips malformed json chunks and counts unknown events as activity', async () => {
+    const out: string[] = [];
+    let activityCount = 0;
+    const unknownFrame = `data: ${JSON.stringify({ type: 'response.some_new_event', value: true })}\n\n`;
+    const deltaFrame = `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'ok' })}\n\n`;
+
+    await parseResponsesStream(streamFromChunks(['data: {not json}\n\n', unknownFrame, deltaFrame, 'data: [DONE]\n\n']), {
+      onDelta: (text) => out.push(text),
+      onActivity: () => { activityCount += 1; },
+    });
+
+    expect(out).toEqual(['ok']);
+    expect(activityCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('accepts shared Responses API types', () => {
+    const apiMode: ApiMode = 'responses';
+    const tool: BuiltInTool = 'web_search';
+    const toolEvent: ToolEvent = {
+      id: 'ws_1',
+      type: tool,
+      status: 'started',
+      title: 'Web search',
+    };
+
+    expect(apiMode).toBe('responses');
+    expect(toolEvent.type).toBe('web_search');
   });
 });

@@ -7,10 +7,23 @@ import {
   hasApiKey,
 } from './settingsStore';
 import * as convo from './conversationStore';
+import {
+  exportConversationMarkdown,
+  exportConversationsJson,
+} from './conversationExport';
 import { defaultProvider } from './llmProvider';
-import type { ChatStreamRequest, ChatMessage } from '../shared/types';
+import { testQwenConnection } from './qwenService';
+import {
+  hasUnresolvedBaseUrlTemplate,
+  type ChatStreamRequest,
+  type ChatMessage,
+  type ApiMode,
+  type BuiltInTool,
+  type ToolEvent,
+} from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
 import { normalizeExternalUrl } from '../shared/externalLinks';
+import { sanitizeDiagnosticDetail } from '../shared/diagnostics';
 
 interface StreamControllerEntry {
   senderId: number;
@@ -21,6 +34,9 @@ interface StreamControllerEntry {
 const controllers = new Map<string, StreamControllerEntry>();
 const CHAT_ROLES = ['system', 'user', 'assistant'] as const;
 const MESSAGE_STATUSES = ['pending', 'streaming', 'done', 'error'] as const;
+const API_MODES = ['chat_completions', 'responses'] as const;
+const BUILT_IN_TOOLS = ['web_search'] as const;
+const TOOL_STATUSES = ['started', 'completed', 'failed'] as const;
 
 let registered = false;
 
@@ -47,6 +63,18 @@ function isMessageStatus(value: unknown): value is NonNullable<ChatMessage['stat
   );
 }
 
+function isApiMode(value: unknown): value is ApiMode {
+  return typeof value === 'string' && API_MODES.includes(value as ApiMode);
+}
+
+function isBuiltInTool(value: unknown): value is BuiltInTool {
+  return typeof value === 'string' && BUILT_IN_TOOLS.includes(value as BuiltInTool);
+}
+
+function isToolStatus(value: unknown): value is ToolEvent['status'] {
+  return typeof value === 'string' && TOOL_STATUSES.includes(value as ToolEvent['status']);
+}
+
 function requireRecord(value: unknown, field: string): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new TypeError(`${field} must be an object`);
@@ -70,6 +98,14 @@ function requireNonEmptyString(value: unknown, field: string): string {
   }
 
   return text;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${field} must be a boolean`);
+  }
+
+  return value;
 }
 
 function requireFiniteNumber(value: unknown, field: string): number {
@@ -98,12 +134,22 @@ function validateSettingsPatch(value: unknown): SettingsPatch {
   if (hasOwn(input, 'temperature') && input.temperature !== undefined) {
     patch.temperature = requireFiniteNumber(input.temperature, 'temperature');
   }
+  if (hasOwn(input, 'apiMode') && input.apiMode !== undefined) {
+    patch.apiMode = validateApiMode(input.apiMode, 'apiMode');
+  }
+  if (hasOwn(input, 'webSearchEnabled') && input.webSearchEnabled !== undefined) {
+    patch.webSearchEnabled = requireBoolean(input.webSearchEnabled, 'webSearchEnabled');
+  }
   if (hasOwn(input, 'apiKey') && input.apiKey !== undefined) {
     const apiKey = requireString(input.apiKey, 'apiKey').trim();
     if (apiKey) patch.apiKey = apiKey;
   }
 
   return patch;
+}
+
+function validateOptionalSettingsPatch(value: unknown): SettingsPatch {
+  return value === undefined ? {} : validateSettingsPatch(value);
 }
 
 function validateUsage(
@@ -117,6 +163,45 @@ function validateUsage(
     completionTokens: requireFiniteNumber(input.completionTokens, `${field}.completionTokens`),
     totalTokens: requireFiniteNumber(input.totalTokens, `${field}.totalTokens`),
   };
+}
+
+function validateToolEvent(value: unknown, field: string): ToolEvent {
+  const input = requireRecord(value, field);
+
+  if (!isBuiltInTool(input.type)) {
+    throw new TypeError(`${field}.type must be web_search`);
+  }
+  if (!isToolStatus(input.status)) {
+    throw new TypeError(`${field}.status must be started, completed, or failed`);
+  }
+
+  const event: ToolEvent = {
+    id: requireString(input.id, `${field}.id`),
+    type: input.type,
+    status: input.status,
+    title: requireString(input.title, `${field}.title`),
+  };
+
+  if (hasOwn(input, 'detail') && input.detail !== undefined) {
+    event.detail = requireString(input.detail, `${field}.detail`);
+  }
+
+  return event;
+}
+
+function repairOptionalToolEvents(value: unknown): ToolEvent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const toolEvents = value.reduce<ToolEvent[]>((acc, event, index) => {
+    try {
+      acc.push(validateToolEvent(event, `toolEvents[${index}]`));
+    } catch {
+      // Optional provider metadata is best-effort during conversation saves.
+    }
+    return acc;
+  }, []);
+
+  return toolEvents.length > 0 ? toolEvents : undefined;
 }
 
 function validateChatMessage(value: unknown, field: string): ChatMessage {
@@ -148,8 +233,27 @@ function validateChatMessage(value: unknown, field: string): ChatMessage {
   if (hasOwn(input, 'error') && input.error !== undefined) {
     message.error = requireString(input.error, `${field}.error`);
   }
+  if (hasOwn(input, 'errorDetail') && input.errorDetail !== undefined) {
+    message.errorDetail = sanitizeDiagnosticDetail(
+      requireString(input.errorDetail, `${field}.errorDetail`),
+    );
+  }
   if (hasOwn(input, 'usage') && input.usage !== undefined) {
     message.usage = validateUsage(input.usage, `${field}.usage`);
+  }
+  if (hasOwn(input, 'provider') && input.provider !== undefined) {
+    if (isApiMode(input.provider)) {
+      message.provider = input.provider;
+    }
+  }
+  if (hasOwn(input, 'providerResponseId') && input.providerResponseId !== undefined) {
+    if (typeof input.providerResponseId === 'string') {
+      message.providerResponseId = input.providerResponseId;
+    }
+  }
+  if (hasOwn(input, 'toolEvents') && input.toolEvents !== undefined) {
+    const toolEvents = repairOptionalToolEvents(input.toolEvents);
+    if (toolEvents) message.toolEvents = toolEvents;
   }
 
   return message;
@@ -187,6 +291,27 @@ function validateStreamMessages(value: unknown): ChatStreamRequest['messages'] {
   return value.map((message, index) => validateStreamMessage(message, `messages[${index}]`));
 }
 
+function validateApiMode(value: unknown, field: string): ApiMode {
+  if (!isApiMode(value)) {
+    throw new TypeError(`${field} must be chat_completions or responses`);
+  }
+
+  return value;
+}
+
+function validateBuiltInTools(value: unknown): BuiltInTool[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError('tools must be an array');
+  }
+
+  return value.map((tool, index) => {
+    if (!isBuiltInTool(tool)) {
+      throw new TypeError(`tools[${index}] must be web_search`);
+    }
+    return tool;
+  });
+}
+
 function validateChatStreamRequest(value: unknown): ChatStreamRequest {
   const input = requireRecord(value, 'chat stream request');
   const request: ChatStreamRequest = {
@@ -200,6 +325,18 @@ function validateChatStreamRequest(value: unknown): ChatStreamRequest {
   }
   if (hasOwn(input, 'temperature') && input.temperature !== undefined) {
     request.temperature = requireFiniteNumber(input.temperature, 'temperature');
+  }
+  if (hasOwn(input, 'apiMode') && input.apiMode !== undefined) {
+    request.apiMode = validateApiMode(input.apiMode, 'apiMode');
+  }
+  if (hasOwn(input, 'tools') && input.tools !== undefined) {
+    request.tools = validateBuiltInTools(input.tools);
+  }
+  if (hasOwn(input, 'previousResponseId') && input.previousResponseId !== undefined) {
+    request.previousResponseId = requireNonEmptyString(
+      input.previousResponseId,
+      'previousResponseId',
+    );
   }
 
   return request;
@@ -222,6 +359,15 @@ function safeSend(sender: WebContents, channel: string, payload: unknown): void 
   }
 }
 
+function detailFromError(error: unknown): string | undefined {
+  if (!isRecord(error)) return undefined;
+  return typeof error.detail === 'string' ? sanitizeDiagnosticDetail(error.detail) : undefined;
+}
+
+function isDifferentBaseUrl(candidate: string | undefined, saved: string): boolean {
+  return candidate !== undefined && candidate.trim() !== saved.trim();
+}
+
 export function registerIpc(): void {
   if (registered) return;
   registered = true;
@@ -233,6 +379,44 @@ export function registerIpc(): void {
     saveSettings(rest);
   });
   ipcMain.handle('settings:hasApiKey', () => hasApiKey());
+  ipcMain.handle('diagnostics:testConnection', async (_event, rawPatch?: unknown) => {
+    const { apiKey: patchApiKey, ...settingsPatch } = validateOptionalSettingsPatch(rawPatch);
+    const savedSettings = getSettings();
+    const settings = { ...savedSettings, ...settingsPatch };
+    const hasTemporaryApiKey = typeof patchApiKey === 'string' && patchApiKey.length > 0;
+    const apiKey = (patchApiKey ?? getApiKey()).trim();
+
+    if (isDifferentBaseUrl(settingsPatch.baseUrl, savedSettings.baseUrl) && !hasTemporaryApiKey) {
+      return {
+        ok: false,
+        category: 'config',
+        message: 'Testing an unsaved Base URL requires a temporary API key.',
+      };
+    }
+
+    if (!apiKey) {
+      return {
+        ok: false,
+        category: 'missing_key',
+        message: 'No API key is configured. Save an API key or enter one temporarily.',
+      };
+    }
+
+    if (hasUnresolvedBaseUrlTemplate(settings.baseUrl)) {
+      return {
+        ok: false,
+        category: 'config',
+        message: 'Base URL still contains an unresolved template placeholder.',
+        detail: sanitizeDiagnosticDetail(settings.baseUrl),
+      };
+    }
+
+    return testQwenConnection({
+      apiKey,
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+    });
+  });
 
   ipcMain.handle('shell:openExternal', (_event, rawUrl: unknown) => {
     const url = normalizeExternalUrl(requireString(rawUrl, 'url'));
@@ -261,6 +445,26 @@ export function registerIpc(): void {
     const messages = validateChatMessages(rawMessages);
     return convo.saveMessages(id, messages);
   });
+  ipcMain.handle('convo:setPinned', (_e, rawId: unknown, rawPinned: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const pinned = requireBoolean(rawPinned, 'pinned');
+    return convo.setConversationPinned(id, pinned);
+  });
+  ipcMain.handle('convo:setArchived', (_e, rawId: unknown, rawArchived: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const archived = requireBoolean(rawArchived, 'archived');
+    return convo.setConversationArchived(id, archived);
+  });
+  ipcMain.handle('convo:exportMarkdown', (_e, rawId: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const conversation = convo.getConversation(id);
+    if (!conversation) {
+      throw new Error(`Conversation not found: ${id}`);
+    }
+
+    return exportConversationMarkdown(conversation);
+  });
+  ipcMain.handle('convo:exportJson', () => exportConversationsJson(convo.listConversations()));
 
   ipcMain.handle('chat:stream', async (event: IpcMainInvokeEvent, rawPayload: unknown) => {
     let payload: ChatStreamRequest;
@@ -305,25 +509,47 @@ export function registerIpc(): void {
     event.sender.once('destroyed', onDestroyed);
 
     try {
-      await defaultProvider.streamChat({
+      const apiMode = payload.apiMode ?? 'chat_completions';
+      const streamInput = {
         apiKey,
         baseUrl: settings.baseUrl,
         model: payload.model || settings.model,
         temperature: payload.temperature ?? settings.temperature,
         messages: payload.messages,
+        apiMode,
         signal: controller.signal,
         onDelta: (text) =>
           safeSend(event.sender, 'chat:delta', { requestId: payload.requestId, text }),
         onUsage: (usage) =>
           safeSend(event.sender, 'chat:usage', { requestId: payload.requestId, usage }),
-      });
+        onResponseId: (responseId) =>
+          safeSend(event.sender, 'chat:response', {
+            requestId: payload.requestId,
+            responseId,
+          }),
+        onToolEvent: (toolEvent) =>
+          safeSend(event.sender, 'chat:tool', {
+            requestId: payload.requestId,
+            event: toolEvent,
+          }),
+        ...(apiMode === 'responses' && payload.tools ? { tools: payload.tools } : {}),
+        ...(apiMode === 'responses' && payload.previousResponseId
+          ? { previousResponseId: payload.previousResponseId }
+          : {}),
+      } satisfies Parameters<typeof defaultProvider.streamTurn>[0];
+
+      await defaultProvider.streamTurn(streamInput);
       safeSend(event.sender, 'chat:done', { requestId: payload.requestId });
     } catch (err) {
       if (controller.signal.aborted) {
         safeSend(event.sender, 'chat:done', { requestId: payload.requestId, aborted: true });
       } else {
         const message = err instanceof Error ? err.message : '未知错误';
-        safeSend(event.sender, 'chat:error', { requestId: payload.requestId, message });
+        safeSend(event.sender, 'chat:error', {
+          requestId: payload.requestId,
+          message,
+          detail: detailFromError(err),
+        });
       }
     } finally {
       if (!event.sender.isDestroyed()) {

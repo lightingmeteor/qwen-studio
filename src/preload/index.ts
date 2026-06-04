@@ -13,12 +13,17 @@ const api: QwenApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (patch) => ipcRenderer.invoke('settings:save', patch),
   hasApiKey: () => ipcRenderer.invoke('settings:hasApiKey'),
+  testConnection: (patch) => ipcRenderer.invoke('diagnostics:testConnection', patch),
 
   listConversations: () => ipcRenderer.invoke('convo:list'),
   createConversation: (title) => ipcRenderer.invoke('convo:create', title),
   renameConversation: (id, title) => ipcRenderer.invoke('convo:rename', id, title),
   deleteConversation: (id) => ipcRenderer.invoke('convo:delete', id),
   saveMessages: (id, messages) => ipcRenderer.invoke('convo:saveMessages', id, messages),
+  setConversationPinned: (id, pinned) => ipcRenderer.invoke('convo:setPinned', id, pinned),
+  setConversationArchived: (id, archived) => ipcRenderer.invoke('convo:setArchived', id, archived),
+  exportConversationMarkdown: (id) => ipcRenderer.invoke('convo:exportMarkdown', id),
+  exportConversationsJson: () => ipcRenderer.invoke('convo:exportJson'),
 
   chatStream: (payload) => ipcRenderer.invoke('chat:stream', payload),
   abortChat: (requestId) => ipcRenderer.invoke('chat:abort', requestId),
@@ -26,6 +31,8 @@ const api: QwenApi = {
 
   onChatDelta: subscribe('chat:delta') as QwenApi['onChatDelta'],
   onChatUsage: subscribe('chat:usage') as QwenApi['onChatUsage'],
+  onChatResponse: subscribe('chat:response') as QwenApi['onChatResponse'],
+  onChatTool: subscribe('chat:tool') as QwenApi['onChatTool'],
   onChatDone: subscribe('chat:done') as QwenApi['onChatDone'],
   onChatError: subscribe('chat:error') as QwenApi['onChatError'],
 };

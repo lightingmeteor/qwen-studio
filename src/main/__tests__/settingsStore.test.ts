@@ -11,7 +11,8 @@ async function importSettingsStore(options: {
 }) {
   vi.resetModules();
 
-  const data: StoreData = { ...(options.initialData ?? {}) };
+  const initialData: StoreData = { ...(options.initialData ?? {}) };
+  const data: StoreData = { ...initialData };
   const safeStorage = {
     isEncryptionAvailable: vi.fn(() => options.encryptionAvailable ?? true),
     getSelectedStorageBackend: vi.fn(() => options.backend ?? 'secret_service'),
@@ -23,7 +24,7 @@ async function importSettingsStore(options: {
   vi.doMock('electron-store', () => ({
     default: class MockStore {
       constructor(config: { defaults?: StoreData }) {
-        Object.assign(data, config.defaults, data);
+        Object.assign(data, config.defaults, initialData);
       }
 
       get(key: string) {
@@ -105,6 +106,90 @@ describe('settingsStore api key encryption', () => {
     expect(data.apiKey).toEqual({
       mode: 'safeStorage',
       value: Buffer.from('enc:sk-old', 'utf-8').toString('base64'),
+    });
+  });
+});
+
+describe('settingsStore settings persistence', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('uses Task 4 defaults when persisted settings do not include responses options', async () => {
+    const { mod } = await importSettingsStore({
+      initialData: {
+        settings: {
+          baseUrl: 'https://example.test/v1',
+          model: 'qwen-test',
+          temperature: 0.3,
+          systemPrompt: 'Be brief.',
+        },
+      },
+    });
+
+    expect(mod.getSettings()).toMatchObject({
+      baseUrl: 'https://example.test/v1',
+      model: 'qwen-test',
+      temperature: 0.3,
+      systemPrompt: 'Be brief.',
+      apiMode: 'chat_completions',
+      webSearchEnabled: false,
+    });
+  });
+
+  it('persists responses mode and web search settings', async () => {
+    const { mod, data } = await importSettingsStore({});
+
+    mod.saveSettings({ apiMode: 'responses', webSearchEnabled: true });
+
+    expect(data.settings).toMatchObject({
+      apiMode: 'responses',
+      webSearchEnabled: true,
+    });
+    expect(mod.getSettings()).toMatchObject({
+      apiMode: 'responses',
+      webSearchEnabled: true,
+    });
+  });
+
+  it('repairs invalid persisted responses option values to defaults', async () => {
+    const { mod } = await importSettingsStore({
+      initialData: {
+        settings: {
+          apiMode: 'invalid-mode',
+          webSearchEnabled: 'yes',
+        },
+      },
+    });
+
+    expect(mod.getSettings()).toMatchObject({
+      apiMode: 'chat_completions',
+      webSearchEnabled: false,
+    });
+  });
+
+  it('repairs malformed persisted settings fields to defaults', async () => {
+    const { mod } = await importSettingsStore({
+      initialData: {
+        settings: {
+          baseUrl: 42,
+          model: null,
+          temperature: '0.7',
+          systemPrompt: false,
+          apiMode: 'responses',
+          webSearchEnabled: true,
+        },
+      },
+    });
+
+    expect(mod.getSettings()).toMatchObject({
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: 'You are Qwen, a helpful assistant.',
+      apiMode: 'responses',
+      webSearchEnabled: true,
     });
   });
 });
