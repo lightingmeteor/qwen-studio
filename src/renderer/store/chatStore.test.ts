@@ -590,6 +590,56 @@ describe('chatStore streaming routing', () => {
     });
   });
 
+  it('falls back to full history in Responses mode when later Chat Completions turns follow a response id', async () => {
+    const fake = installFakeBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [
+        makeUserMessage('m1', 'first'),
+        {
+          ...makeAssistantMessage('m2', 'first response reply'),
+          provider: 'responses' as const,
+          providerResponseId: 'resp-old',
+        },
+        makeUserMessage('m3', 'chat follow up'),
+        {
+          ...makeAssistantMessage('m4', 'chat reply'),
+          provider: 'chat_completions' as const,
+        },
+      ],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        webSearchEnabled: true,
+        systemPrompt: 'Be concise.',
+      },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('responses again');
+
+    expect(fake.chatStreamCalls).toHaveLength(1);
+    const payload = fake.chatStreamCalls[0] as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      apiMode: 'responses',
+      tools: ['web_search'],
+      messages: [
+        { role: 'system', content: 'Be concise.' },
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'first response reply' },
+        { role: 'user', content: 'chat follow up' },
+        { role: 'assistant', content: 'chat reply' },
+        { role: 'user', content: 'responses again' },
+      ],
+    });
+    expect(payload).not.toHaveProperty('previousResponseId');
+  });
+
   it('does not send Responses-only fields in Chat Completions mode', async () => {
     const fake = installFakeBridge();
     const conversation = {

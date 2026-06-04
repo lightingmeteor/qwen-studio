@@ -98,10 +98,20 @@ function abortAndDeleteRoutes(conversationId: string): string[] {
   return requestIds;
 }
 
-function latestAssistantResponseId(conversation: Conversation | undefined): string | undefined {
-  return conversation?.messages
-    .filter((message) => message.role === 'assistant' && message.providerResponseId)
-    .at(-1)?.providerResponseId;
+function latestContiguousResponseId(conversation: Conversation | undefined): string | undefined {
+  const lastVisibleMessage = conversation?.messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .at(-1);
+
+  if (
+    lastVisibleMessage?.role === 'assistant' &&
+    lastVisibleMessage.provider === 'responses' &&
+    lastVisibleMessage.providerResponseId
+  ) {
+    return lastVisibleMessage.providerResponseId;
+  }
+
+  return undefined;
 }
 
 async function abortConversationStream(
@@ -243,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const { settings } = useSettingsStore.getState();
     const existingConversation = findConversation(get().conversations, conversationId);
-    const previousResponseId = latestAssistantResponseId(existingConversation);
+    const previousResponseId = latestContiguousResponseId(existingConversation);
     const now = Date.now();
     const userMsg: ChatMessage = { id: genId('m'), role: 'user', content, createdAt: now, status: 'done' };
     const assistantMsg: ChatMessage = {
