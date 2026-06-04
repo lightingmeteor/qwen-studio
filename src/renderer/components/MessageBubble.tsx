@@ -30,6 +30,16 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
         {message.status === 'error' ? (
           <div className="text-red-300 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
             ⚠️ {message.error}
+            {message.errorDetail && (
+              <details className="mt-2 text-xs text-red-100/75">
+                <summary className="cursor-pointer select-none text-red-100/60 hover:text-red-100">
+                  技术细节
+                </summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed [overflow-wrap:anywhere]">
+                  {message.errorDetail}
+                </pre>
+              </details>
+            )}
           </div>
         ) : isUser ? (
           <div className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">

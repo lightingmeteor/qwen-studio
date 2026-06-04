@@ -47,6 +47,7 @@ interface ChatState {
     conversationId: string,
     messageId: string,
     message: string,
+    detail?: string,
   ) => void;
 }
 
@@ -297,12 +298,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     persist(conversationId, get().conversations);
   },
 
-  failMessage: (requestId, conversationId, messageId, message) => {
+  failMessage: (requestId, conversationId, messageId, message, detail) => {
     set((s) => ({
       conversations: updateMessages(s.conversations, conversationId, (m) =>
         m.map((x) =>
           x.id === messageId
-            ? { ...x, status: 'error', error: message, content: x.content || '' }
+            ? {
+                ...x,
+                status: 'error',
+                error: message,
+                errorDetail: detail,
+                content: x.content || '',
+              }
             : x,
         ),
       ),
@@ -340,7 +347,9 @@ export function initChatBridge(): void {
     window.qwen.onChatError((e) => {
       const r = routing.get(e.requestId);
       if (r) {
-        useChatStore.getState().failMessage(e.requestId, r.conversationId, r.messageId, e.message);
+        useChatStore
+          .getState()
+          .failMessage(e.requestId, r.conversationId, r.messageId, e.message, e.detail);
         routing.delete(e.requestId);
       }
     }),

@@ -13,6 +13,7 @@ const api: QwenApi = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (patch) => ipcRenderer.invoke('settings:save', patch),
   hasApiKey: () => ipcRenderer.invoke('settings:hasApiKey'),
+  testConnection: (patch) => ipcRenderer.invoke('diagnostics:testConnection', patch),
 
   listConversations: () => ipcRenderer.invoke('convo:list'),
   createConversation: (title) => ipcRenderer.invoke('convo:create', title),

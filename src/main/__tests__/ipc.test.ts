@@ -29,18 +29,7 @@ const exportMock = vi.hoisted(() => ({
   exportConversationsJson: vi.fn(async () => ({ canceled: false, filePath: '/tmp/all.json' })),
 }));
 
-vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: Handler) => {
-      handlers.set(channel, handler);
-    }),
-  },
-  shell: {
-    openExternal: vi.fn(),
-  },
-}));
-
-vi.mock('../settingsStore', () => ({
+const settingsMock = vi.hoisted(() => ({
   getSettings: vi.fn(() => ({
     baseUrl: 'https://example.com/v1',
     model: 'qwen-plus',
@@ -53,6 +42,27 @@ vi.mock('../settingsStore', () => ({
   hasApiKey: vi.fn(() => true),
 }));
 
+const qwenServiceMock = vi.hoisted(() => ({
+  testQwenConnection: vi.fn(async () => ({
+    ok: true,
+    category: 'ok',
+    message: 'Connection test succeeded.',
+  })),
+}));
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: vi.fn((channel: string, handler: Handler) => {
+      handlers.set(channel, handler);
+    }),
+  },
+  shell: {
+    openExternal: vi.fn(),
+  },
+}));
+
+vi.mock('../settingsStore', () => settingsMock);
+
 vi.mock('../conversationStore', () => convoMock);
 vi.mock('../conversationExport', () => exportMock);
 vi.mock('../llmProvider', () => ({
@@ -60,6 +70,7 @@ vi.mock('../llmProvider', () => ({
     streamChat: vi.fn(),
   },
 }));
+vi.mock('../qwenService', () => qwenServiceMock);
 
 async function importIpc() {
   handlers.clear();
@@ -72,6 +83,18 @@ async function importIpc() {
 describe('conversation IPC handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    settingsMock.getSettings.mockReturnValue({
+      baseUrl: 'https://example.com/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: '',
+    });
+    settingsMock.getApiKey.mockReturnValue('sk-test');
+    qwenServiceMock.testQwenConnection.mockResolvedValue({
+      ok: true,
+      category: 'ok',
+      message: 'Connection test succeeded.',
+    });
   });
 
   it('registers handlers for pinning, archiving, and exporting conversations', async () => {
@@ -136,5 +159,75 @@ describe('conversation IPC handlers', () => {
 
     expect(exportMock.exportConversationMarkdown).toHaveBeenCalledWith(conversation);
     expect(exportMock.exportConversationsJson).toHaveBeenCalledWith([conversation]);
+  });
+});
+
+describe('diagnostic IPC handler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settingsMock.getSettings.mockReturnValue({
+      baseUrl: 'https://example.com/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: '',
+    });
+    settingsMock.getApiKey.mockReturnValue('sk-test');
+    qwenServiceMock.testQwenConnection.mockResolvedValue({
+      ok: true,
+      category: 'ok',
+      message: 'Connection test succeeded.',
+    });
+  });
+
+  it('returns missing_key without calling the network when no saved or temporary key exists', async () => {
+    settingsMock.getApiKey.mockReturnValue('');
+    await importIpc();
+
+    await expect(handlers.get('diagnostics:testConnection')?.({})).resolves.toMatchObject({
+      ok: false,
+      category: 'missing_key',
+    });
+    expect(qwenServiceMock.testQwenConnection).not.toHaveBeenCalled();
+  });
+
+  it('returns config without calling the network for unresolved base URL templates', async () => {
+    await importIpc();
+
+    await expect(
+      handlers.get('diagnostics:testConnection')?.({}, {
+        baseUrl: 'https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'config',
+    });
+    expect(qwenServiceMock.testQwenConnection).not.toHaveBeenCalled();
+  });
+
+  it('uses a temporary API key and patch settings without saving them', async () => {
+    await importIpc();
+
+    await expect(
+      handlers.get('diagnostics:testConnection')?.({}, {
+        apiKey: 'sk-temp',
+        baseUrl: 'https://patched.example/v1',
+        model: 'qwen-max',
+        temperature: 0.2,
+        systemPrompt: 'temporary prompt',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      category: 'ok',
+    });
+
+    expect(qwenServiceMock.testQwenConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'sk-temp',
+        baseUrl: 'https://patched.example/v1',
+        model: 'qwen-max',
+      }),
+    );
+    expect(settingsMock.setApiKey).not.toHaveBeenCalled();
+    expect(settingsMock.saveSettings).not.toHaveBeenCalled();
   });
 });

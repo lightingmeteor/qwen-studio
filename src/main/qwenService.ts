@@ -1,4 +1,5 @@
-import type { ChatRole, Usage } from '../shared/types';
+import type { ChatRole, ConnectionDiagnostic, Usage } from '../shared/types';
+import { classifyDiagnosticError, diagnosticFromStatus } from '../shared/diagnostics';
 import { parseSSEStream } from './sse';
 
 export interface QwenMessage {
@@ -19,14 +20,27 @@ export interface StreamChatOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface TestQwenConnectionOptions {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  requestTimeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_CONNECTION_TEST_TIMEOUT_MS = 15_000;
 
 export class QwenApiError extends Error {
   status: number;
+  body: string;
+  detail: string;
   constructor(status: number, body: string) {
     super(friendlyMessage(status, body));
     this.name = 'QwenApiError';
     this.status = status;
+    this.body = body;
+    this.detail = `HTTP ${status}${body ? `: ${truncate(body, 1_000)}` : ''}`;
   }
 }
 
@@ -45,6 +59,15 @@ export function buildRequestBody(o: {
     temperature: o.temperature,
     stream: true,
     stream_options: { include_usage: true },
+  };
+}
+
+export function buildConnectionTestBody(model: string) {
+  return {
+    model,
+    messages: [{ role: 'user' as const, content: 'ping' }],
+    stream: false,
+    max_tokens: 1,
   };
 }
 
@@ -172,6 +195,50 @@ export async function streamQwenChat(options: StreamChatOptions): Promise<void> 
       throw new Error('网络连接失败，请检查网络后重试。');
     }
     throw error;
+  } finally {
+    requestSignal.cleanup();
+  }
+}
+
+export async function testQwenConnection(
+  options: TestQwenConnectionOptions,
+): Promise<ConnectionDiagnostic> {
+  const {
+    apiKey,
+    baseUrl,
+    model,
+    requestTimeoutMs = DEFAULT_CONNECTION_TEST_TIMEOUT_MS,
+  } = options;
+  const doFetch = options.fetchImpl ?? fetch;
+  const requestSignal = createIdleTimeoutSignal(undefined, requestTimeoutMs);
+
+  try {
+    const resp = await doFetch(buildEndpoint(baseUrl), {
+      method: 'POST',
+      signal: requestSignal.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildConnectionTestBody(model)),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      return diagnosticFromStatus(resp.status, text);
+    }
+
+    return {
+      ok: true,
+      category: 'ok',
+      message: 'Connection test succeeded.',
+    };
+  } catch (error) {
+    if (requestSignal.didTimeout()) {
+      return classifyDiagnosticError(new DOMException('The connection test timed out.', 'TimeoutError'));
+    }
+
+    return classifyDiagnosticError(error);
   } finally {
     requestSignal.cleanup();
   }

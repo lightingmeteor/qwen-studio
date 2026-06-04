@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildEndpoint,
+  buildConnectionTestBody,
   buildRequestBody,
   friendlyMessage,
   streamQwenChat,
+  testQwenConnection,
   QwenApiError,
 } from '../qwenService';
 
@@ -90,6 +92,17 @@ describe('buildRequestBody', () => {
       temperature: 0.5,
       stream: true,
       stream_options: { include_usage: true },
+    });
+  });
+});
+
+describe('buildConnectionTestBody', () => {
+  it('creates a minimal non-streaming diagnostic body', () => {
+    expect(buildConnectionTestBody('qwen-plus')).toEqual({
+      model: 'qwen-plus',
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: false,
+      max_tokens: 1,
     });
   });
 });
@@ -304,5 +317,115 @@ describe('streamQwenChat', () => {
         fetchImpl: fetchImpl as unknown as typeof fetch,
       }),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('testQwenConnection', () => {
+  it('returns ok for an accepted diagnostic request', async () => {
+    let calledUrl: RequestInfo | URL | undefined;
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calledUrl = url;
+      calledInit = init;
+      return new Response(JSON.stringify({ id: 'chatcmpl-test' }), { status: 200 });
+    };
+
+    await expect(
+      testQwenConnection({
+        apiKey: 'sk-test',
+        baseUrl: ' https://x.com/v1/ ',
+        model: 'qwen-plus',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).resolves.toMatchObject({ ok: true, category: 'ok' });
+
+    expect(calledUrl).toBe('https://x.com/v1/chat/completions');
+    expect(calledInit).toMatchObject({
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer sk-test',
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(JSON.parse(calledInit?.body as string)).toMatchObject({
+      model: 'qwen-plus',
+      stream: false,
+      max_tokens: 1,
+    });
+  });
+
+  it.each([401, 403])('classifies HTTP %i as auth', async (status) => {
+    const fetchImpl = async () => new Response('bad key', { status });
+
+    await expect(
+      testQwenConnection({
+        apiKey: 'sk-test',
+        baseUrl: 'https://x.com/v1',
+        model: 'qwen-plus',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'auth',
+      detail: 'bad key',
+    });
+  });
+
+  it.each([400, 404])('classifies HTTP %i as region_or_model', async (status) => {
+    const fetchImpl = async () => new Response('model missing', { status });
+
+    await expect(
+      testQwenConnection({
+        apiKey: 'sk-test',
+        baseUrl: 'https://x.com/v1',
+        model: 'qwen-missing',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'region_or_model',
+      detail: 'model missing',
+    });
+  });
+
+  it('classifies fetch TypeError as network', async () => {
+    const fetchImpl = async () => {
+      throw new TypeError('fetch failed');
+    };
+
+    await expect(
+      testQwenConnection({
+        apiKey: 'sk-test',
+        baseUrl: 'https://x.com/v1',
+        model: 'qwen-plus',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'network',
+    });
+  });
+
+  it('classifies diagnostic timeout as timeout', async () => {
+    const fetchImpl = async (_url: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      });
+
+    await expect(
+      testQwenConnection({
+        apiKey: 'sk-test',
+        baseUrl: 'https://x.com/v1',
+        model: 'qwen-plus',
+        requestTimeoutMs: 1,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      category: 'timeout',
+    });
   });
 });

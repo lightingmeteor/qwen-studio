@@ -8,6 +8,7 @@ import type {
   ChatDoneEvent,
   ChatErrorEvent,
   ExportResult,
+  ConnectionDiagnostic,
 } from './types';
 
 /** Settings patch may carry a plaintext apiKey; it is encrypted in main, never returned. */
@@ -17,6 +18,7 @@ export interface QwenApi {
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: SettingsPatch): Promise<void>;
   hasApiKey(): Promise<boolean>;
+  testConnection(patch?: SettingsPatch): Promise<ConnectionDiagnostic>;
 
   listConversations(): Promise<Conversation[]>;
   createConversation(title?: string): Promise<Conversation>;

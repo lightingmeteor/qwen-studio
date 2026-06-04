@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, type Conversation } from '../../shared/types';
+import { DEFAULT_SETTINGS, type ChatErrorEvent, type Conversation } from '../../shared/types';
 import type { QwenApi } from '../../shared/api';
 import { useSettingsStore } from './settingsStore';
-import { useChatStore } from './chatStore';
+import { initChatBridge, useChatStore } from './chatStore';
 
 function makeConversation(id: string, title = '新会话'): Conversation {
   const now = Date.now();
@@ -31,16 +31,25 @@ function makeStreamingConversation(id: string, messageId: string): Conversation 
   };
 }
 
-function installFakeBridge(): { chatStreamCalls: unknown[] } {
+function installFakeBridge(): {
+  chatStreamCalls: unknown[];
+  emitChatError: (event: ChatErrorEvent) => void;
+} {
   let nextConversation = 1;
   const conversations: Conversation[] = [];
   const chatStreamCalls: unknown[] = [];
+  const errorListeners: Array<(event: ChatErrorEvent) => void> = [];
   const subscribe = () => () => {};
 
   const qwen: QwenApi = {
     getSettings: async () => DEFAULT_SETTINGS,
     saveSettings: async () => {},
     hasApiKey: async () => true,
+    testConnection: async () => ({
+      ok: true,
+      category: 'ok',
+      message: 'Connection test succeeded.',
+    }),
     listConversations: async () => conversations,
     createConversation: async (title?: string) => {
       const conversation = makeConversation(`c${nextConversation++}`, title);
@@ -72,7 +81,13 @@ function installFakeBridge(): { chatStreamCalls: unknown[] } {
     onChatDelta: subscribe,
     onChatUsage: subscribe,
     onChatDone: subscribe,
-    onChatError: subscribe,
+    onChatError: (cb) => {
+      errorListeners.push(cb);
+      return () => {
+        const index = errorListeners.indexOf(cb);
+        if (index >= 0) errorListeners.splice(index, 1);
+      };
+    },
   };
 
   Object.defineProperty(globalThis, 'window', {
@@ -80,7 +95,10 @@ function installFakeBridge(): { chatStreamCalls: unknown[] } {
     configurable: true,
   });
 
-  return { chatStreamCalls };
+  return {
+    chatStreamCalls,
+    emitChatError: (event) => errorListeners.forEach((listener) => listener(event)),
+  };
 }
 
 describe('chatStore streaming routing', () => {
@@ -179,6 +197,24 @@ describe('chatStore streaming routing', () => {
     });
   });
 
+  it('stores technical error detail when a message fails', () => {
+    useChatStore.setState({
+      conversations: [makeStreamingConversation('c1', 'm1')],
+      activeId: 'c1',
+      streamingByConversation: { c1: 'req-1' },
+    });
+
+    useChatStore
+      .getState()
+      .failMessage('req-1', 'c1', 'm1', 'Friendly failure', 'HTTP 500: upstream exploded');
+
+    expect(useChatStore.getState().conversations[0].messages[0]).toMatchObject({
+      status: 'error',
+      error: 'Friendly failure',
+      errorDetail: 'HTTP 500: upstream exploded',
+    });
+  });
+
   it('keeps streaming state when failMessage receives a stale request id', () => {
     useChatStore.setState({
       conversations: [makeStreamingConversation('c1', 'm1')],
@@ -192,6 +228,26 @@ describe('chatStore streaming routing', () => {
     expect(useChatStore.getState().conversations[0].messages[0]).toMatchObject({
       status: 'error',
       error: 'stale failure',
+    });
+  });
+
+  it('preserves error detail from chat error events', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    await useChatStore.getState().sendMessage('hello');
+    const conversationId = useChatStore.getState().activeId!;
+    const requestId = useChatStore.getState().streamingByConversation[conversationId];
+
+    fake.emitChatError({
+      requestId,
+      message: 'Friendly failure',
+      detail: 'HTTP 401: bad key',
+    });
+
+    expect(useChatStore.getState().conversations[0].messages[1]).toMatchObject({
+      status: 'error',
+      error: 'Friendly failure',
+      errorDetail: 'HTTP 401: bad key',
     });
   });
 });

@@ -12,7 +12,12 @@ import {
   exportConversationsJson,
 } from './conversationExport';
 import { defaultProvider } from './llmProvider';
-import type { ChatStreamRequest, ChatMessage } from '../shared/types';
+import { testQwenConnection } from './qwenService';
+import {
+  hasUnresolvedBaseUrlTemplate,
+  type ChatStreamRequest,
+  type ChatMessage,
+} from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
 import { normalizeExternalUrl } from '../shared/externalLinks';
 
@@ -116,6 +121,10 @@ function validateSettingsPatch(value: unknown): SettingsPatch {
   }
 
   return patch;
+}
+
+function validateOptionalSettingsPatch(value: unknown): SettingsPatch {
+  return value === undefined ? {} : validateSettingsPatch(value);
 }
 
 function validateUsage(
@@ -237,6 +246,11 @@ function safeSend(sender: WebContents, channel: string, payload: unknown): void 
   }
 }
 
+function detailFromError(error: unknown): string | undefined {
+  if (!isRecord(error)) return undefined;
+  return typeof error.detail === 'string' ? error.detail : undefined;
+}
+
 export function registerIpc(): void {
   if (registered) return;
   registered = true;
@@ -248,6 +262,34 @@ export function registerIpc(): void {
     saveSettings(rest);
   });
   ipcMain.handle('settings:hasApiKey', () => hasApiKey());
+  ipcMain.handle('diagnostics:testConnection', async (_event, rawPatch?: unknown) => {
+    const { apiKey: patchApiKey, ...settingsPatch } = validateOptionalSettingsPatch(rawPatch);
+    const settings = { ...getSettings(), ...settingsPatch };
+    const apiKey = (patchApiKey ?? getApiKey()).trim();
+
+    if (!apiKey) {
+      return {
+        ok: false,
+        category: 'missing_key',
+        message: 'No API key is configured. Save an API key or enter one temporarily.',
+      };
+    }
+
+    if (hasUnresolvedBaseUrlTemplate(settings.baseUrl)) {
+      return {
+        ok: false,
+        category: 'config',
+        message: 'Base URL still contains an unresolved template placeholder.',
+        detail: settings.baseUrl,
+      };
+    }
+
+    return testQwenConnection({
+      apiKey,
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+    });
+  });
 
   ipcMain.handle('shell:openExternal', (_event, rawUrl: unknown) => {
     const url = normalizeExternalUrl(requireString(rawUrl, 'url'));
@@ -358,7 +400,11 @@ export function registerIpc(): void {
         safeSend(event.sender, 'chat:done', { requestId: payload.requestId, aborted: true });
       } else {
         const message = err instanceof Error ? err.message : '未知错误';
-        safeSend(event.sender, 'chat:error', { requestId: payload.requestId, message });
+        safeSend(event.sender, 'chat:error', {
+          requestId: payload.requestId,
+          message,
+          detail: detailFromError(err),
+        });
       }
     } finally {
       if (!event.sender.isDestroyed()) {
