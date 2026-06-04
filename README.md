@@ -40,6 +40,8 @@ npm run dev
 - 本地历史：会话和消息保存在本机，关闭应用后再打开仍能看到历史。
 - 会话整理：支持搜索会话标题和消息内容、置顶重要会话、归档不常用会话。
 - 设置面板：支持配置 API Key、地域 / Base URL、默认模型、Temperature 和 System Prompt。
+- API 模式：支持在 Chat Completions（默认、稳定路径）和 Responses API 之间切换；Responses 模式会使用 `previous_response_id` 传递上下文。
+- 联网搜索：Responses 模式下可开启 `web_search` 内置工具，并在回复中显示工具调用状态。
 - 连接诊断：设置页可以测试当前 API Key、Base URL 和模型是否可用，并提示认证、地域、模型、网络或超时问题。
 - 地域预设：内置 China Beijing、Singapore、US Virginia、Hong Kong China、Germany Frankfurt 的 OpenAI 兼容接口地址，也支持手动输入自定义 Base URL。
 - Markdown 渲染：支持列表、表格、代码块和代码高亮，代码块可以一键复制。
@@ -65,16 +67,20 @@ npm run dev
 API Key 必须和 Base URL 地域匹配。如果 Key 明明正确但请求报 401 / 403，优先检查地域是否选错。
 Germany Frankfurt 的地址里需要把 `{WorkspaceId}` 替换成你自己的工作空间 ID。
 
+Chat Completions 是默认 API 模式，也是当前最稳定的日常聊天路径。切换到 Responses API 时，应用会把已知的 Model Studio Chat Completions 兼容地址从 `/compatible-mode/v1` 转换为 Responses 兼容地址 `/api/v2/apps/protocols/compatible-mode/v1`，覆盖北京、新加坡、美国、香港和德国工作空间地址模式；自定义地址仍建议确认服务端是否支持 Responses 协议。
+
 ## 如何使用
 
 1. 启动应用后，如果还没有配置 API Key，会自动打开设置窗口。
 2. 在 `API Key` 中填入你的 DashScope / 百炼 Key。
 3. 在 `地域 / Base URL` 里选择 Key 对应的地域；如果你使用的是其它兼容服务，也可以选择 `Custom` 后手动输入 Base URL。
-4. 选择或填写默认模型，例如 `qwen-plus`、`qwen3.5-plus`、`qwen-flash`、`qwen-max`、`qwen-coder`。
-5. 按需调整 `Temperature` 和 `System Prompt`，然后保存。
-6. 回到聊天页，在底部输入问题，使用 `Cmd/Ctrl + Enter` 发送。
-7. 生成过程中可以按 `Esc` 或点击 `停止` 中断回复。
-8. 如果配置不确定，可以回到设置页点击 `测试连接`，先确认 Key、地域和模型可用。
+4. 选择 API 模式。建议日常使用保持 `Chat Completions`；需要 Responses API 上下文或内置工具时再切换到 `Responses`。
+5. 如果使用 Responses 模式，可以按需开启 `web_search`。
+6. 选择或填写默认模型，例如 `qwen-plus`、`qwen3.5-plus`、`qwen-flash`、`qwen-max`、`qwen-coder`。
+7. 按需调整 `Temperature` 和 `System Prompt`，然后保存。
+8. 回到聊天页，在底部输入问题，使用 `Cmd/Ctrl + Enter` 发送。
+9. 生成过程中可以按 `Esc` 或点击 `停止` 中断回复。
+10. 如果配置不确定，可以回到设置页点击 `测试连接`，先确认 Key、地域和模型可用。
 
 ## 日常操作
 
@@ -91,6 +97,7 @@ Germany Frankfurt 的地址里需要把 `{WorkspaceId}` 替换成你自己的工
 - 导出当前会话：聊天页右上角点击 `MD`。
 - 导出全部会话：聊天页右上角点击 `JSON`。
 - 修改模型：聊天页右上角可以快速切换模型；设置页可以修改默认模型和自定义模型名。
+- 切换 API 模式和联网搜索：在设置页选择 `Chat Completions` 或 `Responses`；`web_search` 只在 Responses 模式下生效。
 
 ## 常见问题
 
@@ -101,6 +108,14 @@ Germany Frankfurt 的地址里需要把 `{WorkspaceId}` 替换成你自己的工
 ### 为什么没有返回内容或网络失败？
 
 可能是网络无法访问对应的 DashScope 服务、Base URL 填错、模型名不可用，或者账号额度不足。可以先在设置里点击 `测试连接`，再确认 Base URL 和模型名，或尝试切换到 `qwen-plus`。
+
+### Responses 模式为什么要转换 Base URL？
+
+Model Studio 的 Chat Completions 兼容地址通常以 `/compatible-mode/v1` 结尾，而 Responses API 使用 `/api/v2/apps/protocols/compatible-mode/v1`。应用会自动转换内置地域预设和德国工作空间地址模式；如果你使用自定义 Base URL，需要确认它是否支持 Responses API。
+
+### Responses 模式支持哪些内置工具？
+
+当前 0.4 只接入 `web_search`。暂不包含 `web_extractor`、`code_interpreter`、文件 / Qwen-Long、多模态输入、知识库搜索或自定义函数。
 
 ### API Key 会不会暴露给页面？
 
@@ -158,4 +173,4 @@ npm run dist:linux
 
 ## 当前范围
 
-这个版本聚焦桌面端文本聊天和本地会话资产管理。暂不包含账号登录、云同步、联网搜索、文件知识库、多模态输入、自动更新和后端代理服务。
+这个版本聚焦桌面端文本聊天、本地会话资产管理和 Responses API 的基础接入。Chat Completions 仍是默认稳定路径；联网能力仅限 Responses 模式下的 `web_search` 内置工具。暂不包含账号登录、云同步、`web_extractor`、`code_interpreter`、文件 / Qwen-Long、文件知识库、多模态输入、知识库搜索、自定义函数、自动更新和后端代理服务。

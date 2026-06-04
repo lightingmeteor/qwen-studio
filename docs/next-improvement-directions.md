@@ -4,16 +4,16 @@
 
 ## 结论摘要
 
-0.3 已按本研究建议实施，主线为 **会话资产化 + 使用可靠性**。下一阶段进入 0.4：Responses API / 联网搜索 / 内置工具。
+0.3 和 0.4 均已按本研究建议实施。0.3 主线为 **会话资产化 + 使用可靠性**；0.4 主线为 **Responses API 模式 + `previous_response_id` 上下文 + `web_search` 内置工具**。
 
-当前项目已经完成桌面文本聊天 MVP 和 0.2 改进：基础聊天、流式输出、多会话、本地历史、设置、安全 IPC、地域/模型预设、Windows/macOS/Linux 打包脚本都已具备。测试、类型检查和构建均通过。因此下一步不必先做稳定性救火，而应提升长期使用体验。
+当前项目已经完成桌面文本聊天 MVP、0.2 改进、0.3 会话资产化和 0.4 Responses 基础能力：基础聊天、流式输出、多会话、本地历史、设置、安全 IPC、地域/模型预设、会话搜索/置顶/归档/导出、连接诊断、usage 汇总、Chat Completions / Responses API 模式切换、Responses `previous_response_id` 上下文、`web_search` 开关和工具状态 UI 都已具备。因此下一步应进入文件、长文档、多模态能力，并穿插发布工程增强。
 
 路线顺序：
 
 1. 0.3：会话资产化 + 使用可靠性。（已实施）
-2. 0.4：Responses API / 联网搜索 / 内置工具。（下一步）
-3. 0.5：文件、长文档与多模态输入。
-4. 发布工程增强穿插推进：自动更新、签名、公证、诊断日志。
+2. 0.4：Responses API / `web_search` / 工具状态 UI。（已实施）
+3. 0.5：文件、长文档与多模态输入。（下一步）
+4. 发布工程增强穿插推进：自动更新、签名、公证、诊断日志、发布校验。
 
 ## 当前项目状态
 
@@ -25,6 +25,9 @@
 - 设置面板：API Key、Base URL、模型、Temperature、System Prompt。
 - Markdown 渲染：表格、代码块、高亮、复制代码。
 - 消息操作：复制、重新生成/重试、删除。
+- 会话资产化：搜索、置顶、归档、Markdown 导出、全量 JSON 导出。
+- 可靠性：连接诊断、usage 汇总、错误细节展示。
+- Responses 基础能力：API Mode 设置、`previous_response_id` 上下文、`web_search` 开关、工具状态 UI。
 - 安全边界：API Key 只在主进程使用，preload 暴露白名单 IPC。
 - 发布基础：已有 Windows/macOS/Linux 打包脚本，已有 Windows/macOS 发布 workflow。
 
@@ -47,7 +50,7 @@
 
 ## 外部能力变化
 
-### Qwen Responses API
+### Qwen Responses API（0.4 已接入基础范围）
 
 Alibaba Cloud Model Studio 文档显示，Qwen 支持 OpenAI-compatible Responses API。相较 Chat Completions，它提供：
 
@@ -58,7 +61,15 @@ Alibaba Cloud Model Studio 文档显示，Qwen 支持 OpenAI-compatible Response
 参考：
 https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-responses
 
-影响：这是 0.4 的好方向，但它不是简单替换 endpoint。它会引入新的响应事件、工具调用状态、可见工具轨迹、错误处理和模型/地域兼容性判断。
+0.4 已完成的范围：
+
+- 设置中新增 Chat Completions / Responses API 模式，Chat Completions 保持默认稳定路径。
+- Responses 模式支持 `previous_response_id` 上下文传递。
+- Responses 模式支持 `web_search` 内置工具开关。
+- 回复中显示工具调用状态。
+- 已知 Model Studio Chat Completions Base URL 以 `/compatible-mode/v1` 结尾时，转换为 Responses 兼容路径 `/api/v2/apps/protocols/compatible-mode/v1`，覆盖北京、新加坡、美国、香港和德国工作空间 host 模式。
+
+0.4 明确不包含：`web_extractor`、`code_interpreter`、文件 / Qwen-Long、多模态、知识库搜索、自定义函数。
 
 ### Qwen-Long
 
@@ -118,17 +129,19 @@ https://www.electron.build/docs/features/auto-update
 - 不接 Responses API。
 - 不做文件上传。
 
-### 路线 B：0.4 Responses API / 联网搜索 / 内置工具
+### 路线 B：0.4 Responses API / 联网搜索 / 内置工具（已实施）
 
-目标：让 Qwen Studio 从纯聊天变成可联网、可抽取网页、可执行代码的助手。
+目标：让 Qwen Studio 从纯 Chat Completions 文本聊天扩展到 Responses API，并先接入最小可用的联网搜索能力。
 
-建议功能：
+已实施功能：
 
 - Provider 层新增 Chat Completions 和 Responses 两种能力。
-- 设置里增加“联网搜索/工具模式”开关。
-- 消息流支持工具事件，例如 search started、extractor result、code interpreter result。
-- UI 中显示工具调用轨迹，但默认折叠。
+- 设置里增加 API Mode 和 Responses 模式下的 `web_search` 开关。
+- Responses 流式响应支持工具状态事件。
+- UI 中显示工具调用状态。
 - 保留现有 Chat Completions 作为稳定默认。
+- 使用 `previous_response_id` 串联 Responses 上下文。
+- 兼容 Model Studio 多地域 Responses Base URL 转换。
 
 价值：
 
@@ -136,12 +149,12 @@ https://www.electron.build/docs/features/auto-update
 - 跟 Model Studio 最新能力对齐。
 - 对研究、资料整理、编码辅助价值高。
 
-风险：
+剩余风险：
 
-- 新流式事件解析复杂。
+- 新流式事件解析仍需要持续跟进上游变化。
 - 模型/地域支持矩阵会变化。
-- 工具调用成本和隐私提示必须明确。
-- 需要重新设计 `qwenService.ts` 和 `llmProvider.ts` 的边界。
+- 工具调用成本和隐私提示后续仍可增强。
+- 更多内置工具不应在没有 UI、错误处理和测试设计时直接加入。
 
 ### 路线 C：0.5 文件、长文档、多模态
 
@@ -217,6 +230,28 @@ https://www.electron.build/docs/features/auto-update
 - Usage 按会话汇总。
 - 错误消息保留技术细节的折叠区。
 
+## 0.4 实施范围
+
+0.4 已按最小可用工具路线实施。
+
+### 0.4.1 API 模式
+
+- 设置中增加 Chat Completions / Responses API 模式。
+- Chat Completions 继续作为默认、稳定路径。
+- Responses 模式使用独立 provider 路径，避免影响现有聊天默认体验。
+
+### 0.4.2 Responses 上下文与地址兼容
+
+- Responses 模式保存并传递 `previous_response_id`。
+- 已知 Model Studio Chat Completions Base URL 自动转换为 Responses 兼容路径。
+- 覆盖北京、新加坡、美国、香港和德国工作空间 host 模式。
+
+### 0.4.3 `web_search` 与工具状态
+
+- Responses 模式下提供 `web_search` 开关。
+- 消息中展示工具调用状态。
+- 首批仅支持 `web_search`，不包含 `web_extractor`、`code_interpreter`、文件 / Qwen-Long、多模态、知识库搜索、自定义函数。
+
 ## 数据模型影响
 
 推荐最小扩展：
@@ -245,9 +280,9 @@ interface ConversationExport {
 
 暂不建议在 0.3 引入 SQLite。只有当搜索或导出暴露出明显性能问题，再设计持久层迁移。
 
-## 成功标准
+## 成功标准状态
 
-0.3 成功应满足：
+0.3 成功标准已满足：
 
 - 用户能在 30 秒内找到历史对话。
 - 用户能把重要会话从临时会话中分离出来。
@@ -257,6 +292,17 @@ interface ConversationExport {
 - API Key 仍不暴露给 renderer。
 - 测试、类型检查、构建继续通过。
 
+0.4 成功标准已满足：
+
+- 用户可以在设置中选择 Chat Completions 或 Responses API。
+- Chat Completions 仍是默认、稳定路径。
+- Responses 模式可以使用 `previous_response_id` 传递上下文。
+- Responses 模式可以开启 `web_search`。
+- 工具调用状态能在 UI 中展示。
+- 已知 Model Studio 多地域 Base URL 能转换到 Responses 兼容路径。
+- 0.4 范围没有扩大到 `web_extractor`、`code_interpreter`、文件 / Qwen-Long、多模态、知识库搜索或自定义函数。
+- 测试、类型检查、构建继续通过。
+
 ## 已关闭问题
 
 1. 下一阶段确认选择 0.3：会话资产化 + 使用可靠性。
@@ -264,15 +310,26 @@ interface ConversationExport {
 3. 搜索使用当前本地会话数据做轻量搜索，暂不迁移 SQLite。
 4. Usage 汇总只显示 tokens，不估算价格。
 5. 发布工程增强暂不穿插进 0.3，后续单独安排。
+6. 0.4 选择 Responses API 基础接入，首个内置工具只做 `web_search`。
+7. 0.4 保留 Chat Completions 作为默认路径，不把 Responses 作为强制迁移。
+8. 0.4 不纳入 `web_extractor`、`code_interpreter`、文件 / Qwen-Long、多模态、知识库搜索或自定义函数。
 
 ## 当前建议
 
-0.3 已完成后，继续进入 0.4 正式设计。0.4 应覆盖：
+0.4 已完成后，继续进入 0.5 正式设计。0.5 建议覆盖：
 
-- Chat Completions 与 Responses API 的 provider 边界。
-- SSE 通用解析和 Responses 事件映射。
-- `previous_response_id` 的持久化和上下文传递。
-- `web_search` 作为首个内置工具。
-- 工具调用状态在 UI 中的折叠展示。
-- 模型/地域支持提示、成本和隐私提示。
+- 文件上传、会话附件列表和文件生命周期管理。
+- Qwen-Long / 长文档引用路径。
+- PDF、DOCX、XLSX、Markdown、图片等输入材料的状态、失败和清理机制。
+- 文件与会话、模型、Base URL、地域的绑定关系。
+- 明确的隐私提示：文件会上传到用户的 Model Studio 账户空间。
+- 多模态输入的最小可用路径。
 - 测试计划。
+
+发布工程增强可并行拆小推进：
+
+- 自动更新。
+- macOS 签名/公证和 Windows 签名。
+- 应用内版本信息和检查更新。
+- 诊断日志导出。
+- 发布前测试、类型检查、构建和安装包冒烟检查清单。
