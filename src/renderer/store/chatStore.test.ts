@@ -415,6 +415,66 @@ describe('chatStore streaming routing', () => {
     });
   });
 
+  it('loads conversations by selecting the first non-archived conversation', async () => {
+    const fake = installFakeBridge();
+    const archived = { ...makeConversation('c1'), archived: true };
+    const visible = makeConversation('c2');
+    fake.conversations.push(archived, visible);
+
+    await useChatStore.getState().loadConversations();
+
+    expect(useChatStore.getState().activeId).toBe('c2');
+  });
+
+  it('loads conversations by preserving an existing active conversation', async () => {
+    const fake = installFakeBridge();
+    const archived = { ...makeConversation('c1'), archived: true };
+    const active = makeConversation('c2');
+    fake.conversations.push(archived, active);
+    useChatStore.setState({ conversations: [active], activeId: 'c2' });
+
+    await useChatStore.getState().loadConversations();
+
+    expect(useChatStore.getState().activeId).toBe('c2');
+  });
+
+  it('loads conversations by replacing a missing active conversation with the first non-archived one', async () => {
+    const fake = installFakeBridge();
+    const archived = { ...makeConversation('c1'), archived: true };
+    const visible = makeConversation('c2');
+    fake.conversations.push(archived, visible);
+    useChatStore.setState({ conversations: [], activeId: 'missing' });
+
+    await useChatStore.getState().loadConversations();
+
+    expect(useChatStore.getState().activeId).toBe('c2');
+  });
+
+  it('selects the first non-archived conversation after deleting the active conversation', async () => {
+    const fake = installFakeBridge();
+    const active = makeConversation('c1');
+    const archived = { ...makeConversation('c2'), archived: true };
+    const visible = makeConversation('c3');
+    fake.conversations.push(active, archived, visible);
+    useChatStore.setState({ conversations: [active, archived, visible], activeId: 'c1' });
+
+    await useChatStore.getState().deleteConversation('c1');
+
+    expect(useChatStore.getState().activeId).toBe('c3');
+  });
+
+  it('clears the active conversation after deleting it when only archived conversations remain', async () => {
+    const fake = installFakeBridge();
+    const active = makeConversation('c1');
+    const archived = { ...makeConversation('c2'), archived: true };
+    fake.conversations.push(active, archived);
+    useChatStore.setState({ conversations: [active, archived], activeId: 'c1' });
+
+    await useChatStore.getState().deleteConversation('c1');
+
+    expect(useChatStore.getState().activeId).toBeNull();
+  });
+
   it('archives an inactive conversation through the bridge and updates local state', async () => {
     const fake = installFakeBridge();
     const active = makeConversation('c1');

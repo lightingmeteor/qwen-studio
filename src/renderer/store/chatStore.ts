@@ -78,6 +78,18 @@ function findConversation(conversations: Conversation[], id: string | null): Con
   return conversations.find((c) => c.id === id);
 }
 
+function firstNonArchivedConversationId(conversations: Conversation[]): string | null {
+  return conversations.find((c) => !c.archived)?.id ?? null;
+}
+
+function resolveLoadedActiveId(
+  conversations: Conversation[],
+  activeId: string | null,
+): string | null {
+  if (activeId && findConversation(conversations, activeId)) return activeId;
+  return firstNonArchivedConversationId(conversations);
+}
+
 function persist(conversationId: string, conversations: Conversation[]): void {
   const conv = findConversation(conversations, conversationId);
   if (conv) void window.qwen.saveMessages(conversationId, conv.messages).catch(console.error);
@@ -156,7 +168,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const conversations = await window.qwen.listConversations();
     set({
       conversations,
-      activeId: get().activeId ?? conversations[0]?.id ?? null,
+      activeId: resolveLoadedActiveId(conversations, get().activeId),
     });
   },
 
@@ -179,7 +191,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await window.qwen.deleteConversation(id);
     set((s) => {
       const conversations = s.conversations.filter((c) => c.id !== id);
-      const activeId = s.activeId === id ? conversations[0]?.id ?? null : s.activeId;
+      const activeId =
+        s.activeId === id ? firstNonArchivedConversationId(conversations) : s.activeId;
       const streamingByConversation = { ...s.streamingByConversation };
       if (requestIds.length > 0 || streamingByConversation[id]) {
         delete streamingByConversation[id];
