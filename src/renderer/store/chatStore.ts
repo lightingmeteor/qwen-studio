@@ -3,6 +3,7 @@ import {
   type Conversation,
   type ChatMessage,
   type ChatRole,
+  type ExportResult,
   type Usage,
 } from '../../shared/types';
 import { genId } from '../../shared/id';
@@ -27,11 +28,16 @@ interface ChatState {
   selectConversation: (id: string) => void;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  setConversationPinned: (id: string, pinned: boolean) => Promise<void>;
+  setConversationArchived: (id: string, archived: boolean) => Promise<void>;
+  exportActiveConversationMarkdown: () => Promise<ExportResult | undefined>;
+  exportAllConversationsJson: () => Promise<ExportResult>;
 
   sendMessage: (text: string) => Promise<void>;
   abort: () => Promise<void>;
   regenerate: (messageId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  editAndResend: (messageId: string, text: string) => Promise<void>;
 
   // Internal mutations driven by IPC events:
   appendDelta: (conversationId: string, messageId: string, text: string) => void;
@@ -76,12 +82,33 @@ function routesForConversation(
   return [...routing.entries()].filter(([, route]) => route.conversationId === conversationId);
 }
 
+function uniqueRequestIds(ids: Array<string | undefined>): string[] {
+  return [...new Set(ids.filter((id): id is string => !!id))];
+}
+
 function abortAndDeleteRoutes(conversationId: string): string[] {
   const requestIds = routesForConversation(conversationId).map(([requestId]) => requestId);
   for (const requestId of requestIds) {
     void window.qwen.abortChat(requestId).catch(console.error);
     routing.delete(requestId);
   }
+  return requestIds;
+}
+
+async function abortConversationStream(
+  conversationId: string,
+  streamingByConversation: Record<string, string>,
+): Promise<string[]> {
+  const requestIds = uniqueRequestIds([
+    streamingByConversation[conversationId],
+    ...routesForConversation(conversationId).map(([requestId]) => requestId),
+  ]);
+
+  for (const requestId of requestIds) {
+    routing.delete(requestId);
+  }
+
+  await Promise.all(requestIds.map((requestId) => window.qwen.abortChat(requestId)));
   return requestIds;
 }
 
@@ -147,6 +174,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { conversations, activeId, streamingByConversation };
     });
   },
+
+  setConversationPinned: async (id, pinned) => {
+    const conversation = await window.qwen.setConversationPinned(id, pinned);
+    set((s) => ({
+      conversations: s.conversations.map((item) =>
+        item.id === id
+          ? conversation
+            ? { ...conversation, pinned: conversation.pinned ?? pinned }
+            : { ...item, pinned }
+          : item,
+      ),
+    }));
+  },
+
+  setConversationArchived: async (id, archived) => {
+    const requestIds = await abortConversationStream(id, get().streamingByConversation);
+    if (requestIds.length > 0 || get().streamingByConversation[id]) {
+      set((s) => {
+        const streamingByConversation = { ...s.streamingByConversation };
+        delete streamingByConversation[id];
+        return { streamingByConversation };
+      });
+    }
+
+    const conversation = await window.qwen.setConversationArchived(id, archived);
+    set((s) => {
+      const conversations = s.conversations.map((item) =>
+        item.id === id
+          ? conversation
+            ? { ...conversation, archived: conversation.archived ?? archived }
+            : { ...item, archived }
+          : item,
+      );
+      const activeId =
+        s.activeId === id && archived
+          ? conversations.find((item) => !item.archived)?.id ?? null
+          : s.activeId;
+      return { conversations, activeId };
+    });
+  },
+
+  exportActiveConversationMarkdown: async () => {
+    const conversationId = get().activeId;
+    if (!conversationId) return undefined;
+    return window.qwen.exportConversationMarkdown(conversationId);
+  },
+
+  exportAllConversationsJson: async () => window.qwen.exportConversationsJson(),
 
   sendMessage: async (text) => {
     const activeConversationId = get().activeId;
@@ -263,6 +338,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     }));
     persist(conversationId, get().conversations);
+  },
+
+  editAndResend: async (messageId, text) => {
+    const conversationId = get().activeId;
+    if (!conversationId) return;
+    if (get().streamingByConversation[conversationId]) return;
+
+    const content = text.trim();
+    if (!content) return;
+
+    const conv = findConversation(get().conversations, conversationId);
+    if (!conv) return;
+
+    const messageIndex = conv.messages.findIndex((message) => message.id === messageId);
+    if (messageIndex < 0) return;
+    if (conv.messages[messageIndex].role !== 'user') return;
+
+    const trimmed = conv.messages.slice(0, messageIndex);
+    set((s) => ({
+      conversations: updateMessages(s.conversations, conversationId, () => trimmed),
+    }));
+    persist(conversationId, get().conversations);
+    await get().sendMessage(content);
   },
 
   appendDelta: (conversationId, messageId, text) => {
