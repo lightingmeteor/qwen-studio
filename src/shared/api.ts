@@ -7,6 +7,7 @@ import type {
   ChatUsageEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ExportResult,
 } from './types';
 
 /** Settings patch may carry a plaintext apiKey; it is encrypted in main, never returned. */
@@ -22,6 +23,10 @@ export interface QwenApi {
   renameConversation(id: string, title: string): Promise<void>;
   deleteConversation(id: string): Promise<void>;
   saveMessages(conversationId: string, messages: ChatMessage[]): Promise<void>;
+  setConversationPinned(id: string, pinned: boolean): Promise<Conversation>;
+  setConversationArchived(id: string, archived: boolean): Promise<Conversation>;
+  exportConversationMarkdown(id: string): Promise<ExportResult>;
+  exportConversationsJson(): Promise<ExportResult>;
 
   chatStream(payload: ChatStreamRequest): Promise<void>;
   abortChat(requestId: string): Promise<void>;

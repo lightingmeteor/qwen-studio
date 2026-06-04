@@ -7,6 +7,10 @@ import {
   hasApiKey,
 } from './settingsStore';
 import * as convo from './conversationStore';
+import {
+  exportConversationMarkdown,
+  exportConversationsJson,
+} from './conversationExport';
 import { defaultProvider } from './llmProvider';
 import type { ChatStreamRequest, ChatMessage } from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
@@ -70,6 +74,14 @@ function requireNonEmptyString(value: unknown, field: string): string {
   }
 
   return text;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${field} must be a boolean`);
+  }
+
+  return value;
 }
 
 function requireFiniteNumber(value: unknown, field: string): number {
@@ -147,6 +159,9 @@ function validateChatMessage(value: unknown, field: string): ChatMessage {
   }
   if (hasOwn(input, 'error') && input.error !== undefined) {
     message.error = requireString(input.error, `${field}.error`);
+  }
+  if (hasOwn(input, 'errorDetail') && input.errorDetail !== undefined) {
+    message.errorDetail = requireString(input.errorDetail, `${field}.errorDetail`);
   }
   if (hasOwn(input, 'usage') && input.usage !== undefined) {
     message.usage = validateUsage(input.usage, `${field}.usage`);
@@ -261,6 +276,26 @@ export function registerIpc(): void {
     const messages = validateChatMessages(rawMessages);
     return convo.saveMessages(id, messages);
   });
+  ipcMain.handle('convo:setPinned', (_e, rawId: unknown, rawPinned: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const pinned = requireBoolean(rawPinned, 'pinned');
+    return convo.setConversationPinned(id, pinned);
+  });
+  ipcMain.handle('convo:setArchived', (_e, rawId: unknown, rawArchived: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const archived = requireBoolean(rawArchived, 'archived');
+    return convo.setConversationArchived(id, archived);
+  });
+  ipcMain.handle('convo:exportMarkdown', (_e, rawId: unknown) => {
+    const id = requireNonEmptyString(rawId, 'id');
+    const conversation = convo.getConversation(id);
+    if (!conversation) {
+      throw new Error(`Conversation not found: ${id}`);
+    }
+
+    return exportConversationMarkdown(conversation);
+  });
+  ipcMain.handle('convo:exportJson', () => exportConversationsJson(convo.listConversations()));
 
   ipcMain.handle('chat:stream', async (event: IpcMainInvokeEvent, rawPayload: unknown) => {
     let payload: ChatStreamRequest;

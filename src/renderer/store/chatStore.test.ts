@@ -50,6 +50,20 @@ function installFakeBridge(): { chatStreamCalls: unknown[] } {
     renameConversation: async () => {},
     deleteConversation: async () => {},
     saveMessages: async () => {},
+    setConversationPinned: async (id: string, pinned: boolean) => {
+      const conversation = conversations.find((item) => item.id === id);
+      if (!conversation) throw new Error(`Conversation not found: ${id}`);
+      conversation.pinned = pinned;
+      return conversation;
+    },
+    setConversationArchived: async (id: string, archived: boolean) => {
+      const conversation = conversations.find((item) => item.id === id);
+      if (!conversation) throw new Error(`Conversation not found: ${id}`);
+      conversation.archived = archived;
+      return conversation;
+    },
+    exportConversationMarkdown: async () => ({ canceled: true }),
+    exportConversationsJson: async () => ({ canceled: true }),
     chatStream: async (payload: unknown) => {
       chatStreamCalls.push(payload);
     },

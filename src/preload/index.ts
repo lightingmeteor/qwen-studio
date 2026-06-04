@@ -19,6 +19,10 @@ const api: QwenApi = {
   renameConversation: (id, title) => ipcRenderer.invoke('convo:rename', id, title),
   deleteConversation: (id) => ipcRenderer.invoke('convo:delete', id),
   saveMessages: (id, messages) => ipcRenderer.invoke('convo:saveMessages', id, messages),
+  setConversationPinned: (id, pinned) => ipcRenderer.invoke('convo:setPinned', id, pinned),
+  setConversationArchived: (id, archived) => ipcRenderer.invoke('convo:setArchived', id, archived),
+  exportConversationMarkdown: (id) => ipcRenderer.invoke('convo:exportMarkdown', id),
+  exportConversationsJson: () => ipcRenderer.invoke('convo:exportJson'),
 
   chatStream: (payload) => ipcRenderer.invoke('chat:stream', payload),
   abortChat: (requestId) => ipcRenderer.invoke('chat:abort', requestId),
