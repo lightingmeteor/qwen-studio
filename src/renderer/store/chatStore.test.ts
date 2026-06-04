@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETTINGS,
+  type ChatDoneEvent,
   type ChatErrorEvent,
   type ChatMessage,
   type Conversation,
@@ -66,6 +67,7 @@ function installFakeBridge(): {
   exportJsonCalls: number;
   abortChatCalls: string[];
   conversations: Conversation[];
+  emitChatDone: (event: ChatDoneEvent) => void;
   emitChatError: (event: ChatErrorEvent) => void;
 } {
   let nextConversation = 1;
@@ -77,6 +79,7 @@ function installFakeBridge(): {
   const exportMarkdownCalls: string[] = [];
   let exportJsonCalls = 0;
   const abortChatCalls: string[] = [];
+  const doneListeners: Array<(event: ChatDoneEvent) => void> = [];
   const errorListeners: Array<(event: ChatErrorEvent) => void> = [];
   const subscribe = () => () => {};
   const markdownResult: ExportResult = {
@@ -107,20 +110,32 @@ function installFakeBridge(): {
     deleteConversation: async () => {},
     saveMessages: async (conversationId, messages) => {
       saveMessagesCalls.push({ conversationId, messages });
+      const conversation = conversations.find((item) => item.id === conversationId);
+      if (conversation) {
+        conversation.messages = messages.map((message) => ({ ...message }));
+      }
     },
     setConversationPinned: async (id: string, pinned: boolean) => {
       pinnedCalls.push({ id, pinned });
       const conversation = conversations.find((item) => item.id === id);
       if (!conversation) throw new Error(`Conversation not found: ${id}`);
-      conversation.pinned = pinned;
-      return conversation;
+      return {
+        ...conversation,
+        title: `${conversation.title} pinned-returned`,
+        messages: conversation.messages.map((message) => ({ ...message })),
+        pinned,
+      };
     },
     setConversationArchived: async (id: string, archived: boolean) => {
       archivedCalls.push({ id, archived });
       const conversation = conversations.find((item) => item.id === id);
       if (!conversation) throw new Error(`Conversation not found: ${id}`);
-      conversation.archived = archived;
-      return conversation;
+      return {
+        ...conversation,
+        title: `${conversation.title} archived-returned`,
+        messages: conversation.messages.map((message) => ({ ...message })),
+        archived,
+      };
     },
     exportConversationMarkdown: async (id) => {
       exportMarkdownCalls.push(id);
@@ -139,7 +154,13 @@ function installFakeBridge(): {
     openExternal: async () => {},
     onChatDelta: subscribe,
     onChatUsage: subscribe,
-    onChatDone: subscribe,
+    onChatDone: (cb) => {
+      doneListeners.push(cb);
+      return () => {
+        const index = doneListeners.indexOf(cb);
+        if (index >= 0) doneListeners.splice(index, 1);
+      };
+    },
     onChatError: (cb) => {
       errorListeners.push(cb);
       return () => {
@@ -165,6 +186,7 @@ function installFakeBridge(): {
     },
     abortChatCalls,
     conversations,
+    emitChatDone: (event) => doneListeners.forEach((listener) => listener(event)),
     emitChatError: (event) => errorListeners.forEach((listener) => listener(event)),
   };
 }
@@ -328,7 +350,10 @@ describe('chatStore streaming routing', () => {
     await useChatStore.getState().setConversationPinned('c1', true);
 
     expect(fake.pinnedCalls).toEqual([{ id: 'c1', pinned: true }]);
-    expect(useChatStore.getState().conversations[0].pinned).toBe(true);
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      pinned: true,
+      title: '新会话 pinned-returned',
+    });
   });
 
   it('archives an inactive conversation through the bridge and updates local state', async () => {
@@ -343,6 +368,9 @@ describe('chatStore streaming routing', () => {
     expect(fake.archivedCalls).toEqual([{ id: 'c2', archived: true }]);
     expect(useChatStore.getState().conversations.find((item) => item.id === 'c2')?.archived).toBe(
       true,
+    );
+    expect(useChatStore.getState().conversations.find((item) => item.id === 'c2')?.title).toBe(
+      '新会话 archived-returned',
     );
     expect(useChatStore.getState().activeId).toBe('c1');
   });
@@ -375,6 +403,28 @@ describe('chatStore streaming routing', () => {
     expect(fake.abortChatCalls).toEqual(['req-1']);
     expect(fake.archivedCalls).toEqual([{ id: 'c1', archived: true }]);
     expect(useChatStore.getState().streamingByConversation).toEqual({});
+  });
+
+  it('keeps routing after archiving a streaming conversation so chat done finalizes the message', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    await useChatStore.getState().sendMessage('hello');
+    const conversationId = useChatStore.getState().activeId!;
+    const requestId = useChatStore.getState().streamingByConversation[conversationId];
+
+    await useChatStore.getState().setConversationArchived(conversationId, true);
+
+    expect(useChatStore.getState().streamingByConversation).toEqual({});
+    fake.emitChatDone({ requestId, aborted: true });
+
+    expect(useChatStore.getState().conversations[0].messages[1]).toMatchObject({
+      status: 'done',
+      aborted: true,
+    });
+    expect(fake.saveMessagesCalls.at(-1)?.messages[1]).toMatchObject({
+      status: 'done',
+      aborted: true,
+    });
   });
 
   it('exports the active conversation as markdown and all conversations as json', async () => {
@@ -455,5 +505,28 @@ describe('chatStore streaming routing', () => {
     expect(fake.saveMessagesCalls).toEqual([]);
     expect(fake.chatStreamCalls).toEqual([]);
     expect(useChatStore.getState().conversations[0].messages).toEqual(conversation.messages);
+  });
+
+  it('does not truncate edit and resend history when the API key is missing', async () => {
+    const fake = installFakeBridge();
+    const messages = [
+      makeUserMessage('m1', 'first'),
+      makeAssistantMessage('m2', 'first reply'),
+      makeUserMessage('m3', 'old follow up'),
+      makeAssistantMessage('m4', 'old reply'),
+    ];
+    const conversation = {
+      ...makeConversation('c1'),
+      messages,
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({ hasKey: false });
+
+    await useChatStore.getState().editAndResend('m3', 'revised follow up');
+
+    expect(fake.saveMessagesCalls).toEqual([]);
+    expect(fake.chatStreamCalls).toEqual([]);
+    expect(useChatStore.getState().conversations[0].messages).toEqual(messages);
   });
 });

@@ -82,10 +82,6 @@ function routesForConversation(
   return [...routing.entries()].filter(([, route]) => route.conversationId === conversationId);
 }
 
-function uniqueRequestIds(ids: Array<string | undefined>): string[] {
-  return [...new Set(ids.filter((id): id is string => !!id))];
-}
-
 function abortAndDeleteRoutes(conversationId: string): string[] {
   const requestIds = routesForConversation(conversationId).map(([requestId]) => requestId);
   for (const requestId of requestIds) {
@@ -99,14 +95,8 @@ async function abortConversationStream(
   conversationId: string,
   streamingByConversation: Record<string, string>,
 ): Promise<string[]> {
-  const requestIds = uniqueRequestIds([
-    streamingByConversation[conversationId],
-    ...routesForConversation(conversationId).map(([requestId]) => requestId),
-  ]);
-
-  for (const requestId of requestIds) {
-    routing.delete(requestId);
-  }
+  const requestId = streamingByConversation[conversationId];
+  const requestIds = requestId ? [requestId] : [];
 
   await Promise.all(requestIds.map((requestId) => window.qwen.abortChat(requestId)));
   return requestIds;
@@ -347,6 +337,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const content = text.trim();
     if (!content) return;
+    if (!useSettingsStore.getState().hasKey) return;
 
     const conv = findConversation(get().conversations, conversationId);
     if (!conv) return;
