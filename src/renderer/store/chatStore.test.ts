@@ -4,6 +4,8 @@ import {
   type ChatDoneEvent,
   type ChatErrorEvent,
   type ChatMessage,
+  type ChatResponseEvent,
+  type ChatToolEvent,
   type Conversation,
   type ExportResult,
 } from '../../shared/types';
@@ -67,6 +69,8 @@ function installFakeBridge(): {
   exportJsonCalls: number;
   abortChatCalls: string[];
   conversations: Conversation[];
+  emitChatResponse: (event: ChatResponseEvent) => void;
+  emitChatTool: (event: ChatToolEvent) => void;
   emitChatDone: (event: ChatDoneEvent) => void;
   emitChatError: (event: ChatErrorEvent) => void;
 } {
@@ -79,6 +83,8 @@ function installFakeBridge(): {
   const exportMarkdownCalls: string[] = [];
   let exportJsonCalls = 0;
   const abortChatCalls: string[] = [];
+  const responseListeners: Array<(event: ChatResponseEvent) => void> = [];
+  const toolListeners: Array<(event: ChatToolEvent) => void> = [];
   const doneListeners: Array<(event: ChatDoneEvent) => void> = [];
   const errorListeners: Array<(event: ChatErrorEvent) => void> = [];
   const subscribe = () => () => {};
@@ -154,6 +160,20 @@ function installFakeBridge(): {
     openExternal: async () => {},
     onChatDelta: subscribe,
     onChatUsage: subscribe,
+    onChatResponse: (cb) => {
+      responseListeners.push(cb);
+      return () => {
+        const index = responseListeners.indexOf(cb);
+        if (index >= 0) responseListeners.splice(index, 1);
+      };
+    },
+    onChatTool: (cb) => {
+      toolListeners.push(cb);
+      return () => {
+        const index = toolListeners.indexOf(cb);
+        if (index >= 0) toolListeners.splice(index, 1);
+      };
+    },
     onChatDone: (cb) => {
       doneListeners.push(cb);
       return () => {
@@ -186,6 +206,8 @@ function installFakeBridge(): {
     },
     abortChatCalls,
     conversations,
+    emitChatResponse: (event) => responseListeners.forEach((listener) => listener(event)),
+    emitChatTool: (event) => toolListeners.forEach((listener) => listener(event)),
     emitChatDone: (event) => doneListeners.forEach((listener) => listener(event)),
     emitChatError: (event) => errorListeners.forEach((listener) => listener(event)),
   };
@@ -341,6 +363,43 @@ describe('chatStore streaming routing', () => {
     });
   });
 
+  it('stores provider response ids and tool events from bridge events', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, apiMode: 'responses' },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('hello');
+    const conversationId = useChatStore.getState().activeId!;
+    const requestId = useChatStore.getState().streamingByConversation[conversationId];
+    const toolEvent = {
+      id: 'tool-1',
+      type: 'web_search' as const,
+      status: 'started' as const,
+      title: 'Searching',
+      detail: 'hello',
+    };
+
+    fake.emitChatResponse({ requestId, responseId: 'resp-1' });
+    fake.emitChatTool({ requestId, event: toolEvent });
+
+    expect(useChatStore.getState().conversations[0].messages[1]).toMatchObject({
+      role: 'assistant',
+      provider: 'responses',
+      providerResponseId: 'resp-1',
+      toolEvents: [toolEvent],
+    });
+    expect(fake.saveMessagesCalls.at(-2)?.messages[1]).toMatchObject({
+      providerResponseId: 'resp-1',
+    });
+    expect(fake.saveMessagesCalls.at(-1)?.messages[1]).toMatchObject({
+      toolEvents: [toolEvent],
+    });
+  });
+
   it('pins a conversation through the bridge and updates local state', async () => {
     const fake = installFakeBridge();
     const conversation = makeConversation('c1');
@@ -485,6 +544,90 @@ describe('chatStore streaming routing', () => {
       role: 'user',
       content: 'revised follow up',
     });
+  });
+
+  it('sends Responses requests with the latest assistant response id and enabled web search', async () => {
+    const fake = installFakeBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [
+        makeUserMessage('m1', 'first'),
+        {
+          ...makeAssistantMessage('m2', 'first reply'),
+          provider: 'responses' as const,
+          providerResponseId: 'resp-prev',
+        },
+      ],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'responses',
+        webSearchEnabled: true,
+        systemPrompt: 'Be concise.',
+      },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('follow up');
+
+    expect(fake.chatStreamCalls).toHaveLength(1);
+    expect(fake.chatStreamCalls[0]).toMatchObject({
+      apiMode: 'responses',
+      tools: ['web_search'],
+      previousResponseId: 'resp-prev',
+      messages: [
+        { role: 'system', content: 'Be concise.' },
+        { role: 'user', content: 'follow up' },
+      ],
+    });
+    expect(useChatStore.getState().conversations[0].messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      provider: 'responses',
+    });
+  });
+
+  it('does not send Responses-only fields in Chat Completions mode', async () => {
+    const fake = installFakeBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [
+        makeUserMessage('m1', 'first'),
+        {
+          ...makeAssistantMessage('m2', 'first reply'),
+          provider: 'responses' as const,
+          providerResponseId: 'resp-prev',
+        },
+      ],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiMode: 'chat_completions',
+        webSearchEnabled: true,
+      },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('follow up');
+
+    expect(fake.chatStreamCalls).toHaveLength(1);
+    const payload = fake.chatStreamCalls[0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('apiMode');
+    expect(payload).not.toHaveProperty('tools');
+    expect(payload).not.toHaveProperty('previousResponseId');
+    expect(payload.messages).toMatchObject([
+      { role: 'system', content: DEFAULT_SETTINGS.systemPrompt },
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'first reply' },
+      { role: 'user', content: 'follow up' },
+    ]);
   });
 
   it('ignores edit and resend while the active conversation is streaming', async () => {

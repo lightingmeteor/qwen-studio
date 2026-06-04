@@ -3,6 +3,7 @@ import {
   type Conversation,
   type ChatMessage,
   type ChatRole,
+  type ToolEvent,
   type ExportResult,
   type Usage,
 } from '../../shared/types';
@@ -42,6 +43,12 @@ interface ChatState {
   // Internal mutations driven by IPC events:
   appendDelta: (conversationId: string, messageId: string, text: string) => void;
   setUsage: (conversationId: string, messageId: string, usage: Usage) => void;
+  setProviderResponseId: (
+    conversationId: string,
+    messageId: string,
+    responseId: string,
+  ) => void;
+  appendToolEvent: (conversationId: string, messageId: string, event: ToolEvent) => void;
   finishMessage: (
     requestId: string,
     conversationId: string,
@@ -89,6 +96,12 @@ function abortAndDeleteRoutes(conversationId: string): string[] {
     routing.delete(requestId);
   }
   return requestIds;
+}
+
+function latestAssistantResponseId(conversation: Conversation | undefined): string | undefined {
+  return conversation?.messages
+    .filter((message) => message.role === 'assistant' && message.providerResponseId)
+    .at(-1)?.providerResponseId;
 }
 
 async function abortConversationStream(
@@ -229,6 +242,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const { settings } = useSettingsStore.getState();
+    const existingConversation = findConversation(get().conversations, conversationId);
+    const previousResponseId = latestAssistantResponseId(existingConversation);
     const now = Date.now();
     const userMsg: ChatMessage = { id: genId('m'), role: 'user', content, createdAt: now, status: 'done' };
     const assistantMsg: ChatMessage = {
@@ -237,6 +252,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content: '',
       createdAt: now + 1,
       status: 'streaming',
+      provider: settings.apiMode,
     };
 
     // Append both messages, and auto-title the conversation from the first user message.
@@ -268,21 +284,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .filter((m) => m.id !== assistantMsg.id && (m.role === 'user' || m.role === 'assistant'))
       .map((m) => ({ role: m.role as ChatRole, content: m.content }));
 
-    const messages = [
-      ...(settings.systemPrompt
-        ? [{ role: 'system' as ChatRole, content: settings.systemPrompt }]
-        : []),
-      ...history,
-    ];
+    const systemMessages = settings.systemPrompt
+      ? [{ role: 'system' as ChatRole, content: settings.systemPrompt }]
+      : [];
+    const messages =
+      settings.apiMode === 'responses' && previousResponseId
+        ? [...systemMessages, { role: 'user' as ChatRole, content }]
+        : [...systemMessages, ...history];
 
     try {
-      await window.qwen.chatStream({
+      const streamPayload = {
         requestId,
         conversationId,
         model: settings.model,
         temperature: settings.temperature,
         messages,
-      });
+        ...(settings.apiMode === 'responses'
+          ? {
+              apiMode: settings.apiMode,
+              ...(settings.webSearchEnabled ? { tools: ['web_search' as const] } : {}),
+              ...(previousResponseId ? { previousResponseId } : {}),
+            }
+          : {}),
+      };
+
+      await window.qwen.chatStream(streamPayload);
     } catch (error) {
       if (routing.delete(requestId)) {
         get().failMessage(requestId, conversationId, assistantMsg.id, errorMessage(error));
@@ -370,6 +396,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  setProviderResponseId: (conversationId, messageId, responseId) => {
+    set((s) => ({
+      conversations: updateMessages(s.conversations, conversationId, (m) =>
+        m.map((x) => (x.id === messageId ? { ...x, providerResponseId: responseId } : x)),
+      ),
+    }));
+    persist(conversationId, get().conversations);
+  },
+
+  appendToolEvent: (conversationId, messageId, event) => {
+    set((s) => ({
+      conversations: updateMessages(s.conversations, conversationId, (m) =>
+        m.map((x) =>
+          x.id === messageId ? { ...x, toolEvents: [...(x.toolEvents ?? []), event] } : x,
+        ),
+      ),
+    }));
+    persist(conversationId, get().conversations);
+  },
+
   finishMessage: (requestId, conversationId, messageId, aborted) => {
     set((s) => ({
       conversations: updateMessages(s.conversations, conversationId, (m) =>
@@ -425,6 +471,18 @@ export function initChatBridge(): void {
     window.qwen.onChatUsage((e) => {
       const r = routing.get(e.requestId);
       if (r) useChatStore.getState().setUsage(r.conversationId, r.messageId, e.usage);
+    }),
+    window.qwen.onChatResponse((e) => {
+      const r = routing.get(e.requestId);
+      if (r) {
+        useChatStore
+          .getState()
+          .setProviderResponseId(r.conversationId, r.messageId, e.responseId);
+      }
+    }),
+    window.qwen.onChatTool((e) => {
+      const r = routing.get(e.requestId);
+      if (r) useChatStore.getState().appendToolEvent(r.conversationId, r.messageId, e.event);
     }),
     window.qwen.onChatDone((e) => {
       const r = routing.get(e.requestId);

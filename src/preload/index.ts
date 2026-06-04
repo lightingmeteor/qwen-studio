@@ -31,6 +31,8 @@ const api: QwenApi = {
 
   onChatDelta: subscribe('chat:delta') as QwenApi['onChatDelta'],
   onChatUsage: subscribe('chat:usage') as QwenApi['onChatUsage'],
+  onChatResponse: subscribe('chat:response') as QwenApi['onChatResponse'],
+  onChatTool: subscribe('chat:tool') as QwenApi['onChatTool'],
   onChatDone: subscribe('chat:done') as QwenApi['onChatDone'],
   onChatError: subscribe('chat:error') as QwenApi['onChatError'],
 };

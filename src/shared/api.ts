@@ -5,6 +5,8 @@ import type {
   ChatStreamRequest,
   ChatDeltaEvent,
   ChatUsageEvent,
+  ChatResponseEvent,
+  ChatToolEvent,
   ChatDoneEvent,
   ChatErrorEvent,
   ExportResult,
@@ -36,6 +38,8 @@ export interface QwenApi {
 
   onChatDelta(cb: (e: ChatDeltaEvent) => void): () => void;
   onChatUsage(cb: (e: ChatUsageEvent) => void): () => void;
+  onChatResponse(cb: (e: ChatResponseEvent) => void): () => void;
+  onChatTool(cb: (e: ChatToolEvent) => void): () => void;
   onChatDone(cb: (e: ChatDoneEvent) => void): () => void;
   onChatError(cb: (e: ChatErrorEvent) => void): () => void;
 }

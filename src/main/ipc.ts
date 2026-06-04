@@ -17,6 +17,9 @@ import {
   hasUnresolvedBaseUrlTemplate,
   type ChatStreamRequest,
   type ChatMessage,
+  type ApiMode,
+  type BuiltInTool,
+  type ToolEvent,
 } from '../shared/types';
 import type { SettingsPatch } from '../shared/api';
 import { normalizeExternalUrl } from '../shared/externalLinks';
@@ -31,6 +34,9 @@ interface StreamControllerEntry {
 const controllers = new Map<string, StreamControllerEntry>();
 const CHAT_ROLES = ['system', 'user', 'assistant'] as const;
 const MESSAGE_STATUSES = ['pending', 'streaming', 'done', 'error'] as const;
+const API_MODES = ['chat_completions', 'responses'] as const;
+const BUILT_IN_TOOLS = ['web_search'] as const;
+const TOOL_STATUSES = ['started', 'completed', 'failed'] as const;
 
 let registered = false;
 
@@ -55,6 +61,18 @@ function isMessageStatus(value: unknown): value is NonNullable<ChatMessage['stat
     typeof value === 'string' &&
     MESSAGE_STATUSES.includes(value as NonNullable<ChatMessage['status']>)
   );
+}
+
+function isApiMode(value: unknown): value is ApiMode {
+  return typeof value === 'string' && API_MODES.includes(value as ApiMode);
+}
+
+function isBuiltInTool(value: unknown): value is BuiltInTool {
+  return typeof value === 'string' && BUILT_IN_TOOLS.includes(value as BuiltInTool);
+}
+
+function isToolStatus(value: unknown): value is ToolEvent['status'] {
+  return typeof value === 'string' && TOOL_STATUSES.includes(value as ToolEvent['status']);
 }
 
 function requireRecord(value: unknown, field: string): Record<string, unknown> {
@@ -141,6 +159,38 @@ function validateUsage(
   };
 }
 
+function validateToolEvent(value: unknown, field: string): ToolEvent {
+  const input = requireRecord(value, field);
+
+  if (!isBuiltInTool(input.type)) {
+    throw new TypeError(`${field}.type must be web_search`);
+  }
+  if (!isToolStatus(input.status)) {
+    throw new TypeError(`${field}.status must be started, completed, or failed`);
+  }
+
+  const event: ToolEvent = {
+    id: requireString(input.id, `${field}.id`),
+    type: input.type,
+    status: input.status,
+    title: requireString(input.title, `${field}.title`),
+  };
+
+  if (hasOwn(input, 'detail') && input.detail !== undefined) {
+    event.detail = requireString(input.detail, `${field}.detail`);
+  }
+
+  return event;
+}
+
+function validateToolEvents(value: unknown, field: string): ToolEvent[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${field} must be an array`);
+  }
+
+  return value.map((event, index) => validateToolEvent(event, `${field}[${index}]`));
+}
+
 function validateChatMessage(value: unknown, field: string): ChatMessage {
   const input = requireRecord(value, field);
 
@@ -178,6 +228,21 @@ function validateChatMessage(value: unknown, field: string): ChatMessage {
   if (hasOwn(input, 'usage') && input.usage !== undefined) {
     message.usage = validateUsage(input.usage, `${field}.usage`);
   }
+  if (hasOwn(input, 'provider') && input.provider !== undefined) {
+    if (!isApiMode(input.provider)) {
+      throw new TypeError(`${field}.provider must be chat_completions or responses`);
+    }
+    message.provider = input.provider;
+  }
+  if (hasOwn(input, 'providerResponseId') && input.providerResponseId !== undefined) {
+    message.providerResponseId = requireString(
+      input.providerResponseId,
+      `${field}.providerResponseId`,
+    );
+  }
+  if (hasOwn(input, 'toolEvents') && input.toolEvents !== undefined) {
+    message.toolEvents = validateToolEvents(input.toolEvents, `${field}.toolEvents`);
+  }
 
   return message;
 }
@@ -214,6 +279,27 @@ function validateStreamMessages(value: unknown): ChatStreamRequest['messages'] {
   return value.map((message, index) => validateStreamMessage(message, `messages[${index}]`));
 }
 
+function validateApiMode(value: unknown, field: string): ApiMode {
+  if (!isApiMode(value)) {
+    throw new TypeError(`${field} must be chat_completions or responses`);
+  }
+
+  return value;
+}
+
+function validateBuiltInTools(value: unknown): BuiltInTool[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError('tools must be an array');
+  }
+
+  return value.map((tool, index) => {
+    if (!isBuiltInTool(tool)) {
+      throw new TypeError(`tools[${index}] must be web_search`);
+    }
+    return tool;
+  });
+}
+
 function validateChatStreamRequest(value: unknown): ChatStreamRequest {
   const input = requireRecord(value, 'chat stream request');
   const request: ChatStreamRequest = {
@@ -227,6 +313,18 @@ function validateChatStreamRequest(value: unknown): ChatStreamRequest {
   }
   if (hasOwn(input, 'temperature') && input.temperature !== undefined) {
     request.temperature = requireFiniteNumber(input.temperature, 'temperature');
+  }
+  if (hasOwn(input, 'apiMode') && input.apiMode !== undefined) {
+    request.apiMode = validateApiMode(input.apiMode, 'apiMode');
+  }
+  if (hasOwn(input, 'tools') && input.tools !== undefined) {
+    request.tools = validateBuiltInTools(input.tools);
+  }
+  if (hasOwn(input, 'previousResponseId') && input.previousResponseId !== undefined) {
+    request.previousResponseId = requireNonEmptyString(
+      input.previousResponseId,
+      'previousResponseId',
+    );
   }
 
   return request;
@@ -399,18 +497,36 @@ export function registerIpc(): void {
     event.sender.once('destroyed', onDestroyed);
 
     try {
-      await defaultProvider.streamChat({
+      const apiMode = payload.apiMode ?? 'chat_completions';
+      const streamInput = {
         apiKey,
         baseUrl: settings.baseUrl,
         model: payload.model || settings.model,
         temperature: payload.temperature ?? settings.temperature,
         messages: payload.messages,
+        apiMode,
         signal: controller.signal,
         onDelta: (text) =>
           safeSend(event.sender, 'chat:delta', { requestId: payload.requestId, text }),
         onUsage: (usage) =>
           safeSend(event.sender, 'chat:usage', { requestId: payload.requestId, usage }),
-      });
+        onResponseId: (responseId) =>
+          safeSend(event.sender, 'chat:response', {
+            requestId: payload.requestId,
+            responseId,
+          }),
+        onToolEvent: (toolEvent) =>
+          safeSend(event.sender, 'chat:tool', {
+            requestId: payload.requestId,
+            event: toolEvent,
+          }),
+        ...(apiMode === 'responses' && payload.tools ? { tools: payload.tools } : {}),
+        ...(apiMode === 'responses' && payload.previousResponseId
+          ? { previousResponseId: payload.previousResponseId }
+          : {}),
+      } satisfies Parameters<typeof defaultProvider.streamTurn>[0];
+
+      await defaultProvider.streamTurn(streamInput);
       safeSend(event.sender, 'chat:done', { requestId: payload.requestId });
     } catch (err) {
       if (controller.signal.aborted) {

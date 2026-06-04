@@ -52,6 +52,7 @@ const qwenServiceMock = vi.hoisted(() => ({
 
 const llmProviderMock = vi.hoisted(() => ({
   streamChat: vi.fn(),
+  streamTurn: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -98,6 +99,7 @@ describe('conversation IPC handlers', () => {
       message: 'Connection test succeeded.',
     });
     llmProviderMock.streamChat.mockReset();
+    llmProviderMock.streamTurn.mockReset();
   });
 
   it('registers handlers for pinning, archiving, and exporting conversations', async () => {
@@ -152,6 +154,35 @@ describe('conversation IPC handlers', () => {
     expect(savedMessages[0].errorDetail?.length).toBeLessThanOrEqual(1000);
   });
 
+  it('preserves Responses provider metadata while validating saveMessages payloads', async () => {
+    await importIpc();
+    const messages: ChatMessage[] = [
+      {
+        id: 'm1',
+        role: 'assistant',
+        content: 'I searched the web.',
+        createdAt: 100,
+        status: 'done',
+        provider: 'responses',
+        providerResponseId: 'resp-1',
+        toolEvents: [
+          {
+            id: 'tool-1',
+            type: 'web_search',
+            status: 'completed',
+            title: 'Web search',
+            detail: 'Found 3 results',
+          },
+        ],
+      },
+    ];
+
+    await handlers.get('convo:saveMessages')?.({}, 'c1', messages);
+
+    const savedMessages = (convoMock.saveMessages.mock.calls[0] as unknown[])[1] as ChatMessage[];
+    expect(savedMessages).toEqual(messages);
+  });
+
   it('exports by looking up conversations in main and never accepting renderer output paths', async () => {
     await importIpc();
 
@@ -185,6 +216,7 @@ describe('diagnostic IPC handler', () => {
       message: 'Connection test succeeded.',
     });
     llmProviderMock.streamChat.mockReset();
+    llmProviderMock.streamTurn.mockReset();
   });
 
   it('returns missing_key without calling the network when no saved or temporary key exists', async () => {
@@ -287,13 +319,14 @@ describe('chat IPC errors', () => {
     });
     settingsMock.getApiKey.mockReturnValue('sk-test');
     llmProviderMock.streamChat.mockReset();
+    llmProviderMock.streamTurn.mockReset();
   });
 
   it('sanitizes technical details before sending chat errors to the renderer', async () => {
     const secret = 'sk-' + 'a'.repeat(64);
     const error = new Error('Friendly failure') as Error & { detail: string };
     error.detail = `Authorization: Bearer ${secret} ${'x'.repeat(1200)}`;
-    llmProviderMock.streamChat.mockRejectedValue(error);
+    llmProviderMock.streamTurn.mockRejectedValue(error);
     const sender = {
       id: 1,
       isDestroyed: vi.fn(() => false),
@@ -323,5 +356,141 @@ describe('chat IPC errors', () => {
     const payload = sender.send.mock.calls[0][1] as { detail: string };
     expect(payload.detail).not.toContain(secret);
     expect(payload.detail.length).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe('chat IPC stream requests', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settingsMock.getSettings.mockReturnValue({
+      baseUrl: 'https://example.com/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: '',
+    });
+    settingsMock.getApiKey.mockReturnValue('sk-test');
+    llmProviderMock.streamChat.mockReset();
+    llmProviderMock.streamTurn.mockReset();
+  });
+
+  function makeSender() {
+    return {
+      id: 1,
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+    };
+  }
+
+  it('accepts Responses fields and forwards provider response and tool events', async () => {
+    const toolEvent = {
+      id: 'tool-1',
+      type: 'web_search' as const,
+      status: 'started' as const,
+      title: 'Searching',
+      detail: 'query',
+    };
+    llmProviderMock.streamTurn.mockImplementation(async (input) => {
+      input.onResponseId?.('resp-1');
+      input.onToolEvent?.(toolEvent);
+      input.onDelta('hello');
+    });
+    const sender = makeSender();
+    await importIpc();
+
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-1',
+        conversationId: 'c1',
+        apiMode: 'responses',
+        tools: ['web_search'],
+        previousResponseId: 'resp-prev',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(llmProviderMock.streamTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiMode: 'responses',
+        tools: ['web_search'],
+        previousResponseId: 'resp-prev',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    );
+    expect(sender.send).toHaveBeenCalledWith('chat:response', {
+      requestId: 'req-1',
+      responseId: 'resp-1',
+    });
+    expect(sender.send).toHaveBeenCalledWith('chat:tool', {
+      requestId: 'req-1',
+      event: toolEvent,
+    });
+    expect(sender.send).toHaveBeenCalledWith('chat:delta', {
+      requestId: 'req-1',
+      text: 'hello',
+    });
+    expect(sender.send).toHaveBeenCalledWith('chat:done', { requestId: 'req-1' });
+  });
+
+  it('rejects unknown API modes and tools before calling the provider', async () => {
+    const sender = makeSender();
+    await importIpc();
+
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-bad-mode',
+        conversationId: 'c1',
+        apiMode: 'unknown',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-bad-tool',
+        conversationId: 'c1',
+        apiMode: 'responses',
+        tools: ['calculator'],
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(llmProviderMock.streamTurn).not.toHaveBeenCalled();
+    expect(llmProviderMock.streamChat).not.toHaveBeenCalled();
+    expect(sender.send).toHaveBeenCalledWith('chat:error', {
+      requestId: 'req-bad-mode',
+      message: 'apiMode must be chat_completions or responses',
+    });
+    expect(sender.send).toHaveBeenCalledWith('chat:error', {
+      requestId: 'req-bad-tool',
+      message: 'tools[0] must be web_search',
+    });
+  });
+
+  it('keeps the default chat-completions path free of Responses-only fields', async () => {
+    const sender = makeSender();
+    await importIpc();
+
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-chat',
+        conversationId: 'c1',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(llmProviderMock.streamTurn).toHaveBeenCalledTimes(1);
+    const input = llmProviderMock.streamTurn.mock.calls[0][0];
+    expect(input).toMatchObject({
+      apiMode: 'chat_completions',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    expect(input).not.toHaveProperty('tools');
+    expect(input).not.toHaveProperty('previousResponseId');
+    expect(input).not.toHaveProperty('input');
   });
 });

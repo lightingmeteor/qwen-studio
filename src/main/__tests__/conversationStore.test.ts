@@ -113,6 +113,63 @@ describe('conversationStore metadata repair', () => {
     ]);
   });
 
+  it('preserves valid provider metadata and drops malformed optional provider metadata', async () => {
+    const valid: ChatMessage = {
+      id: 'valid-responses',
+      role: 'assistant',
+      content: 'Found the answer.',
+      createdAt: 100,
+      status: 'done',
+      provider: 'responses',
+      providerResponseId: 'resp-1',
+      toolEvents: [
+        {
+          id: 'tool-1',
+          type: 'web_search',
+          status: 'completed',
+          title: 'Web search',
+          detail: 'Found 3 results',
+        },
+      ],
+    };
+    const repaired = message({
+      id: 'bad-responses',
+      role: 'assistant',
+      content: 'Malformed metadata should be removed.',
+      createdAt: 101,
+    });
+    const malformed = {
+      ...repaired,
+      provider: 'legacy_responses',
+      providerResponseId: 42,
+      toolEvents: [
+        {
+          id: 'tool-2',
+          type: 'web_search',
+          status: 'running',
+          title: 'Bad event',
+        },
+        {
+          id: 'tool-3',
+          type: 'calculator',
+          status: 'completed',
+          title: 'Bad tool',
+        },
+      ],
+    };
+    const { mod, data } = await importConversationStore({
+      conversations: [
+        {
+          ...conversation({ id: 'c1' }),
+          messages: [valid, malformed],
+        },
+      ],
+    });
+
+    expect(mod.getConversation('c1')?.messages).toEqual([valid, repaired]);
+    expect((data.conversations as Conversation[])[0].messages).toEqual([valid, repaired]);
+  });
+
   it('lists archived conversations using display sorting so pinned conversations stay first', async () => {
     const { mod } = await importConversationStore({
       conversations: [
