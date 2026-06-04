@@ -20,7 +20,7 @@ type ChatBridgeGlobal = typeof globalThis & {
 interface ChatState {
   conversations: Conversation[];
   activeId: string | null;
-  streamingRequestId: string | null;
+  streamingByConversation: Record<string, string>;
 
   loadConversations: () => Promise<void>;
   newConversation: () => Promise<void>;
@@ -109,7 +109,7 @@ function clearBridgeListeners(): void {
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeId: null,
-  streamingRequestId: null,
+  streamingByConversation: {},
 
   loadConversations: async () => {
     const conversations = await window.qwen.listConversations();
@@ -139,15 +139,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => {
       const conversations = s.conversations.filter((c) => c.id !== id);
       const activeId = s.activeId === id ? conversations[0]?.id ?? null : s.activeId;
-      const streamingRequestId = requestIds.includes(s.streamingRequestId ?? '')
-        ? null
-        : s.streamingRequestId;
-      return { conversations, activeId, streamingRequestId };
+      const streamingByConversation = { ...s.streamingByConversation };
+      if (requestIds.length > 0 || streamingByConversation[id]) {
+        delete streamingByConversation[id];
+      }
+      return { conversations, activeId, streamingByConversation };
     });
   },
 
   sendMessage: async (text) => {
-    if (get().streamingRequestId) return;
+    const activeConversationId = get().activeId;
+    if (activeConversationId && get().streamingByConversation[activeConversationId]) return;
 
     const content = text.trim();
     if (!content) return;
@@ -191,7 +193,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const requestId = genId('req');
     routing.set(requestId, { conversationId, messageId: assistantMsg.id });
-    set({ streamingRequestId: requestId });
+    set((s) => ({
+      streamingByConversation: { ...s.streamingByConversation, [conversationId]: requestId },
+    }));
 
     const conv = findConversation(get().conversations, conversationId);
     const history = (conv?.messages ?? [])
@@ -221,15 +225,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   abort: async () => {
-    const requestId = get().streamingRequestId;
+    const { activeId, streamingByConversation } = get();
+    const requestId = activeId ? streamingByConversation[activeId] : undefined;
     if (requestId) await window.qwen.abortChat(requestId);
   },
 
   regenerate: async (messageId) => {
-    if (get().streamingRequestId) return;
-
     const conversationId = get().activeId;
     if (!conversationId) return;
+    if (get().streamingByConversation[conversationId]) return;
+
     const conv = findConversation(get().conversations, conversationId);
     if (!conv) return;
     const idx = conv.messages.findIndex((m) => m.id === messageId);
@@ -282,7 +287,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           x.id === messageId ? { ...x, status: 'done', aborted: aborted ?? false } : x,
         ),
       ),
-      streamingRequestId: s.streamingRequestId === requestId ? null : s.streamingRequestId,
+      streamingByConversation:
+        s.streamingByConversation[conversationId] === requestId
+          ? Object.fromEntries(
+              Object.entries(s.streamingByConversation).filter(([id]) => id !== conversationId),
+            )
+          : s.streamingByConversation,
     }));
     persist(conversationId, get().conversations);
   },
@@ -296,7 +306,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : x,
         ),
       ),
-      streamingRequestId: s.streamingRequestId === requestId ? null : s.streamingRequestId,
+      streamingByConversation:
+        s.streamingByConversation[conversationId] === requestId
+          ? Object.fromEntries(
+              Object.entries(s.streamingByConversation).filter(([id]) => id !== conversationId),
+            )
+          : s.streamingByConversation,
     }));
     persist(conversationId, get().conversations);
   },

@@ -9,7 +9,7 @@
 Windows 使用方式：
 
 1. 打开 [Releases](https://github.com/lightingmeteor/qwen-studio/releases/latest)。
-2. 下载 Windows 安装包 `Qwen.Studio.Desktop.Setup.0.1.0.exe`。
+2. 下载 Windows 安装包 `Qwen.Studio.Desktop.Setup.0.2.0.exe`。
 3. 双击运行 `.exe` 安装包。
 4. 按安装向导完成安装，然后从开始菜单或桌面快捷方式打开 `Qwen Studio Desktop`。
 5. 如果 Windows Defender SmartScreen 提示应用发布者未知，确认下载来源是本项目 Releases 后，点击「更多信息」->「仍要运行」。
@@ -35,11 +35,11 @@ npm run dev
 ## 已实现功能
 
 - 多会话聊天：左侧会话列表支持新建、切换、重命名和删除。
-- 流式输出：模型回复会边生成边显示，不用等完整答案返回。
+- 流式输出：模型回复会边生成边显示，不用等完整答案返回；不同会话可以各自生成和停止。
 - 停止生成：回复过程中可以随时停止，已生成的内容会保留。
 - 本地历史：会话和消息保存在本机，关闭应用后再打开仍能看到历史。
 - 设置面板：支持配置 API Key、地域 / Base URL、默认模型、Temperature 和 System Prompt。
-- 地域预设：内置 China Beijing、Singapore、US Virginia、Hong Kong China 的 OpenAI 兼容接口地址，也支持手动输入自定义 Base URL。
+- 地域预设：内置 China Beijing、Singapore、US Virginia、Hong Kong China、Germany Frankfurt 的 OpenAI 兼容接口地址，也支持手动输入自定义 Base URL。
 - Markdown 渲染：支持列表、表格、代码块和代码高亮，代码块可以一键复制。
 - 消息操作：支持复制、重新生成 / 重试、删除单条消息。
 - 安全边界：API Key 只在 Electron 主进程中使用，并通过 `safeStorage` 加密保存；前端页面不会拿到明文 Key。
@@ -56,15 +56,17 @@ npm run dev
 | Singapore | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
 | US Virginia | `https://dashscope-us.aliyuncs.com/compatible-mode/v1` |
 | Hong Kong China | `https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1` |
+| Germany Frankfurt | `https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/compatible-mode/v1` |
 
 API Key 必须和 Base URL 地域匹配。如果 Key 明明正确但请求报 401 / 403，优先检查地域是否选错。
+Germany Frankfurt 的地址里需要把 `{WorkspaceId}` 替换成你自己的工作空间 ID。
 
 ## 如何使用
 
 1. 启动应用后，如果还没有配置 API Key，会自动打开设置窗口。
 2. 在 `API Key` 中填入你的 DashScope / 百炼 Key。
 3. 在 `地域 / Base URL` 里选择 Key 对应的地域；如果你使用的是其它兼容服务，也可以选择 `Custom` 后手动输入 Base URL。
-4. 选择或填写默认模型，例如 `qwen-plus`、`qwen-turbo`、`qwen-max`。
+4. 选择或填写默认模型，例如 `qwen-plus`、`qwen3.5-plus`、`qwen-flash`、`qwen-max`、`qwen-coder`。
 5. 按需调整 `Temperature` 和 `System Prompt`，然后保存。
 6. 回到聊天页，在底部输入问题，使用 `Cmd/Ctrl + Enter` 发送。
 7. 生成过程中可以按 `Esc` 或点击 `停止` 中断回复。
@@ -133,6 +135,14 @@ npm run build
 
 ```bash
 npm run dist
+```
+
+按平台打包：
+
+```bash
+npm run dist:win
+npm run dist:mac
+npm run dist:linux
 ```
 
 ## 当前范围

@@ -7,7 +7,9 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   const [copied, setCopied] = useState(false);
   const regenerate = useChatStore((s) => s.regenerate);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
-  const streaming = useChatStore((s) => s.streamingRequestId !== null);
+  const streaming = useChatStore((s) =>
+    s.activeId ? Boolean(s.streamingByConversation[s.activeId]) : false,
+  );
   const isUser = message.role === 'user';
 
   const copy = async () => {

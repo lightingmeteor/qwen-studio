@@ -69,7 +69,15 @@ export const BASE_URL_PRESETS = [
     label: 'Hong Kong China',
     baseUrl: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
   },
+  {
+    label: 'Germany Frankfurt',
+    baseUrl: 'https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+  },
 ] as const satisfies readonly BaseUrlPreset[];
+
+export function hasUnresolvedBaseUrlTemplate(baseUrl: string): boolean {
+  return /\{[^}]+\}/.test(baseUrl);
+}
 
 export const DEFAULT_SETTINGS: AppSettings = {
   baseUrl: BASE_URL_PRESETS[0].baseUrl,
@@ -78,4 +86,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemPrompt: 'You are Qwen, a helpful assistant.',
 };
 
-export const MODEL_PRESETS = ['qwen-plus', 'qwen-turbo', 'qwen-max'] as const;
+export const MODEL_PRESETS = [
+  'qwen-plus',
+  'qwen3.5-plus',
+  'qwen-flash',
+  'qwen-max',
+  'qwen-coder',
+  'qwen-turbo',
+] as const;

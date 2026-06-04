@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BASE_URL_PRESETS } from '../../shared/types';
+import { BASE_URL_PRESETS, hasUnresolvedBaseUrlTemplate } from '../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
@@ -23,6 +23,11 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
     const trimmedApiKey = apiKey.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
+
+    if (trimmedBaseUrl && hasUnresolvedBaseUrlTemplate(trimmedBaseUrl)) {
+      setSaveError('请先把 Base URL 里的 {WorkspaceId} 替换成你的工作空间 ID。');
+      return;
+    }
 
     try {
       await save({
@@ -80,7 +85,9 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
           onChange={(e) => setBaseUrl(e.target.value)}
           className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-2"
         />
-        <p className="text-xs text-white/50 mb-4">API Key 必须与 Base URL 地域匹配；非中国大陆 key 请切换到对应地域。</p>
+        <p className="text-xs text-white/50 mb-4">
+          API Key 必须与 Base URL 地域匹配；Germany Frankfurt 需要把 {'{WorkspaceId}'} 换成你的工作空间 ID。
+        </p>
 
         <label className="block text-sm mb-1 text-white/70">默认模型</label>
         <input
