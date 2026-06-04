@@ -60,6 +60,7 @@ const KNOWN_DASHSCOPE_HOSTS = new Set([
   'dashscope-us.aliyuncs.com',
   'cn-hongkong.dashscope.aliyuncs.com',
 ]);
+const GERMANY_WORKSPACE_HOST_SUFFIX = '.eu-central-1.maas.aliyuncs.com';
 
 export class QwenApiError extends Error {
   status: number;
@@ -78,13 +79,17 @@ export function buildEndpoint(baseUrl: string): string {
   return `${baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
 }
 
+function isKnownResponsesHost(hostname: string): boolean {
+  return KNOWN_DASHSCOPE_HOSTS.has(hostname) || hostname.endsWith(GERMANY_WORKSPACE_HOST_SUFFIX);
+}
+
 export function buildResponsesBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
 
   try {
     const url = new URL(trimmed);
     if (url.pathname === RESPONSES_COMPATIBLE_PATH) return url.toString().replace(/\/+$/, '');
-    if (KNOWN_DASHSCOPE_HOSTS.has(url.hostname) && url.pathname === CHAT_COMPATIBLE_PATH) {
+    if (isKnownResponsesHost(url.hostname) && url.pathname === CHAT_COMPATIBLE_PATH) {
       url.pathname = RESPONSES_COMPATIBLE_PATH;
       return url.toString().replace(/\/+$/, '');
     }

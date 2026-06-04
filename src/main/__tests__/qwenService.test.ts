@@ -122,6 +122,12 @@ describe('buildResponsesBaseUrl', () => {
     expect(buildResponsesBaseUrl(' https://dashscope-us.aliyuncs.com/compatible-mode/v1/ ')).toBe(
       'https://dashscope-us.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
     );
+    expect(buildResponsesBaseUrl('https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1')).toBe(
+      'https://cn-hongkong.dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+    );
+    expect(buildResponsesBaseUrl('https://studio-abc123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1')).toBe(
+      'https://studio-abc123.eu-central-1.maas.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1',
+    );
   });
 
   it('leaves already-correct Responses base URLs unchanged', () => {
