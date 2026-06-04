@@ -183,12 +183,19 @@ function validateToolEvent(value: unknown, field: string): ToolEvent {
   return event;
 }
 
-function validateToolEvents(value: unknown, field: string): ToolEvent[] {
-  if (!Array.isArray(value)) {
-    throw new TypeError(`${field} must be an array`);
-  }
+function repairOptionalToolEvents(value: unknown): ToolEvent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
 
-  return value.map((event, index) => validateToolEvent(event, `${field}[${index}]`));
+  const toolEvents = value.reduce<ToolEvent[]>((acc, event, index) => {
+    try {
+      acc.push(validateToolEvent(event, `toolEvents[${index}]`));
+    } catch {
+      // Optional provider metadata is best-effort during conversation saves.
+    }
+    return acc;
+  }, []);
+
+  return toolEvents.length > 0 ? toolEvents : undefined;
 }
 
 function validateChatMessage(value: unknown, field: string): ChatMessage {
@@ -229,19 +236,18 @@ function validateChatMessage(value: unknown, field: string): ChatMessage {
     message.usage = validateUsage(input.usage, `${field}.usage`);
   }
   if (hasOwn(input, 'provider') && input.provider !== undefined) {
-    if (!isApiMode(input.provider)) {
-      throw new TypeError(`${field}.provider must be chat_completions or responses`);
+    if (isApiMode(input.provider)) {
+      message.provider = input.provider;
     }
-    message.provider = input.provider;
   }
   if (hasOwn(input, 'providerResponseId') && input.providerResponseId !== undefined) {
-    message.providerResponseId = requireString(
-      input.providerResponseId,
-      `${field}.providerResponseId`,
-    );
+    if (typeof input.providerResponseId === 'string') {
+      message.providerResponseId = input.providerResponseId;
+    }
   }
   if (hasOwn(input, 'toolEvents') && input.toolEvents !== undefined) {
-    message.toolEvents = validateToolEvents(input.toolEvents, `${field}.toolEvents`);
+    const toolEvents = repairOptionalToolEvents(input.toolEvents);
+    if (toolEvents) message.toolEvents = toolEvents;
   }
 
   return message;

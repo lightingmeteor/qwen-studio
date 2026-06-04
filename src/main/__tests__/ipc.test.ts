@@ -183,6 +183,50 @@ describe('conversation IPC handlers', () => {
     expect(savedMessages).toEqual(messages);
   });
 
+  it('drops malformed optional Responses metadata while saving otherwise valid messages', async () => {
+    await importIpc();
+    const validToolEvent = {
+      id: 'tool-1',
+      type: 'web_search' as const,
+      status: 'completed' as const,
+      title: 'Web search',
+      detail: 'Found 3 results',
+    };
+
+    await handlers.get('convo:saveMessages')?.({}, 'c1', [
+      {
+        id: 'm1',
+        role: 'assistant',
+        content: 'I searched the web.',
+        createdAt: 100,
+        status: 'done',
+        provider: 'legacy_responses',
+        providerResponseId: 42,
+        toolEvents: [
+          validToolEvent,
+          {
+            id: 'tool-2',
+            type: 'calculator',
+            status: 'completed',
+            title: 'Unsupported tool',
+          },
+        ],
+      },
+    ]);
+
+    const savedMessages = (convoMock.saveMessages.mock.calls[0] as unknown[])[1] as ChatMessage[];
+    expect(savedMessages).toEqual([
+      {
+        id: 'm1',
+        role: 'assistant',
+        content: 'I searched the web.',
+        createdAt: 100,
+        status: 'done',
+        toolEvents: [validToolEvent],
+      },
+    ]);
+  });
+
   it('exports by looking up conversations in main and never accepting renderer output paths', async () => {
     await importIpc();
 
