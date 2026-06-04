@@ -3,6 +3,7 @@ import type { Usage } from '../shared/types';
 export interface SSEHandlers {
   onDelta: (text: string) => void;
   onUsage?: (usage: Usage) => void;
+  onActivity?: () => void;
 }
 
 function mapUsage(raw: unknown): Usage | undefined {
@@ -26,6 +27,7 @@ export async function parseSSEStream(
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
+    handlers.onActivity?.();
     buffer += decoder.decode(value, { stream: true });
     buffer = buffer.replace(/\r\n/g, '\n');
 

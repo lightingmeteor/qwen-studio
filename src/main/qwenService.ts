@@ -13,10 +13,13 @@ export interface StreamChatOptions {
   messages: QwenMessage[];
   temperature?: number;
   signal?: AbortSignal;
+  requestTimeoutMs?: number;
   onDelta: (text: string) => void;
   onUsage?: (usage: Usage) => void;
   fetchImpl?: typeof fetch;
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export class QwenApiError extends Error {
   status: number;
@@ -59,6 +62,73 @@ export function friendlyMessage(status: number, body: string): string {
   return `请求失败（${status}）。${truncate(body)}`;
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  ) || (
+    error instanceof Error &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError')
+  );
+}
+
+function isFetchNetworkError(error: unknown): boolean {
+  return error instanceof TypeError;
+}
+
+function createIdleTimeoutSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  resetActivity: () => void;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: NodeJS.Timeout | undefined;
+
+  const abortFromCaller = (): void => {
+    controller.abort(signal?.reason);
+  };
+
+  const clearTimer = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  const resetActivity = (): void => {
+    clearTimer();
+    if (timeoutMs > 0 && !controller.signal.aborted) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(new DOMException('The request timed out.', 'TimeoutError'));
+      }, timeoutMs);
+    }
+  };
+
+  if (signal?.aborted) {
+    abortFromCaller();
+  } else if (signal) {
+    signal.addEventListener('abort', abortFromCaller, { once: true });
+  }
+
+  resetActivity();
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    resetActivity,
+    cleanup: () => {
+      clearTimer();
+      signal?.removeEventListener('abort', abortFromCaller);
+    },
+  };
+}
+
 export async function streamQwenChat(options: StreamChatOptions): Promise<void> {
   const {
     apiKey,
@@ -67,26 +137,42 @@ export async function streamQwenChat(options: StreamChatOptions): Promise<void> 
     messages,
     temperature = 0.7,
     signal,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     onDelta,
     onUsage,
   } = options;
   const doFetch = options.fetchImpl ?? fetch;
+  const requestSignal = createIdleTimeoutSignal(signal, requestTimeoutMs);
 
-  const resp = await doFetch(buildEndpoint(baseUrl), {
-    method: 'POST',
-    signal,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(buildRequestBody({ model, messages, temperature })),
-  });
+  try {
+    const resp = await doFetch(buildEndpoint(baseUrl), {
+      method: 'POST',
+      signal: requestSignal.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(buildRequestBody({ model, messages, temperature })),
+    });
+    requestSignal.resetActivity();
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new QwenApiError(resp.status, text);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new QwenApiError(resp.status, text);
+    }
+    if (!resp.body) throw new Error('服务没有返回可读取的流，请稍后重试或检查网关配置。');
+
+    await parseSSEStream(resp.body, { onDelta, onUsage, onActivity: requestSignal.resetActivity });
+  } catch (error) {
+    if (requestSignal.didTimeout()) {
+      throw new Error('请求超时，请检查网络后重试。');
+    }
+    if (isAbortError(error)) throw error;
+    if (isFetchNetworkError(error)) {
+      throw new Error('网络连接失败，请检查网络后重试。');
+    }
+    throw error;
+  } finally {
+    requestSignal.cleanup();
   }
-  if (!resp.body) throw new Error('服务没有返回可读取的流，请稍后重试或检查网关配置。');
-
-  await parseSSEStream(resp.body, { onDelta, onUsage });
 }

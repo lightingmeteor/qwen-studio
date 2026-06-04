@@ -8,6 +8,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
   const [model, setModel] = useState(settings.model);
   const [temperature, setTemperature] = useState(settings.temperature);
   const [systemPrompt, setSystemPrompt] = useState(settings.systemPrompt);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     setBaseUrl(settings.baseUrl);
@@ -21,14 +22,19 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
 
-    await save({
-      ...(trimmedBaseUrl ? { baseUrl: trimmedBaseUrl } : {}),
-      ...(trimmedModel ? { model: trimmedModel } : {}),
-      temperature,
-      systemPrompt,
-      ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
-    });
-    onClose();
+    try {
+      await save({
+        ...(trimmedBaseUrl ? { baseUrl: trimmedBaseUrl } : {}),
+        ...(trimmedModel ? { model: trimmedModel } : {}),
+        temperature,
+        systemPrompt,
+        ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+      });
+      setSaveError('');
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (
@@ -80,6 +86,12 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
           rows={3}
           className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-4 resize-none"
         />
+
+        {saveError && (
+          <div className="mb-4 rounded border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 [overflow-wrap:anywhere]">
+            {saveError}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm">

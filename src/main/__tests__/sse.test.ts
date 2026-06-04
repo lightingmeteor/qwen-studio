@@ -82,4 +82,14 @@ describe('parseSSEStream', () => {
     });
     expect(usage).toEqual({ promptTokens: 3, completionTokens: 5, totalTokens: 8 });
   });
+
+  it('notifies activity whenever a chunk is read', async () => {
+    let activityCount = 0;
+    await parseSSEStream(streamFromChunks([frame('A'), frame('B'), 'data: [DONE]\n\n']), {
+      onDelta: () => {},
+      onActivity: () => { activityCount += 1; },
+    });
+
+    expect(activityCount).toBe(3);
+  });
 });

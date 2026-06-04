@@ -51,7 +51,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           </button>
           {!isUser && !streaming && (
             <button onClick={() => void regenerate(message.id)} className="hover:text-white/90">
-              重新生成
+              {message.status === 'error' ? '重试' : '重新生成'}
             </button>
           )}
           {!streaming && (

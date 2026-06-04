@@ -52,19 +52,21 @@ export function setApiKey(key: string): void {
   }
 
   clearLegacyApiKey();
-  if (isEncryptionAvailable()) {
-    try {
-      store.set('apiKey', { mode: 'safeStorage', value: safeStorage.encryptString(key).toString('base64') });
-      return;
-    } catch {
-      // Fall through to plaintext fallback; the UI should warn about this.
-    }
+
+  if (!isEncryptionAvailable()) {
+    throw new Error('无法安全保存 API Key：当前系统的安全存储不可用。');
   }
 
-  store.set('apiKey', {
-    mode: 'plaintextFallback',
-    value: Buffer.from(key, 'utf-8').toString('base64'),
-  });
+  try {
+    const encryptedApiKey: ApiKeyStorage = {
+      mode: 'safeStorage',
+      value: safeStorage.encryptString(key).toString('base64'),
+    };
+    store.set('apiKey', encryptedApiKey);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`保存 API Key 失败：安全存储加密失败。${reason}`);
+  }
 }
 
 export function getApiKey(): string {
@@ -78,9 +80,9 @@ export function getApiKey(): string {
     return '';
   }
 
-  const buf = Buffer.from(apiKey.value, 'base64');
   if (apiKey.mode === 'plaintextFallback') {
-    return buf.toString('utf-8');
+    clearMalformedApiKey();
+    return '';
   }
 
   if (!isEncryptionAvailable()) {
@@ -88,6 +90,7 @@ export function getApiKey(): string {
   }
 
   try {
+    const buf = Buffer.from(apiKey.value, 'base64');
     return safeStorage.decryptString(buf);
   } catch {
     clearMalformedApiKey();
@@ -107,7 +110,8 @@ export function hasApiKey(): boolean {
   }
 
   if (apiKey.mode === 'plaintextFallback') {
-    return true;
+    clearMalformedApiKey();
+    return false;
   }
 
   if (!isEncryptionAvailable()) {
