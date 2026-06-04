@@ -5,8 +5,11 @@ import MarkdownMessage from './MarkdownMessage';
 
 export default function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
   const regenerate = useChatStore((s) => s.regenerate);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
+  const editAndResend = useChatStore((s) => s.editAndResend);
   const streaming = useChatStore((s) =>
     s.activeId ? Boolean(s.streamingByConversation[s.activeId]) : false,
   );
@@ -16,6 +19,27 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
     await navigator.clipboard.writeText(message.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const startEdit = () => {
+    setDraft(message.content);
+    setEditing(true);
+  };
+
+  const submitEdit = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    if (content === message.content.trim()) {
+      setEditing(false);
+      return;
+    }
+
+    try {
+      await editAndResend(message.id, content);
+      setEditing(false);
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   return (
@@ -41,6 +65,40 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
               </details>
             )}
           </div>
+        ) : editing ? (
+          <div className="space-y-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  void submitEdit();
+                }
+                if (e.key === 'Escape') {
+                  setEditing(false);
+                }
+              }}
+              rows={Math.min(8, Math.max(3, draft.split('\n').length))}
+              className="w-full min-w-[220px] resize-y rounded border border-sky-300/30 bg-black/20 px-3 py-2 text-sm leading-relaxed text-white outline-none focus:border-sky-300/70"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 text-xs">
+              <button
+                onClick={() => setEditing(false)}
+                className="rounded border border-white/10 px-2 py-1 text-white/55 hover:bg-white/10 hover:text-white/85"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => void submitEdit()}
+                disabled={!draft.trim()}
+                className="rounded bg-sky-500/80 px-2 py-1 text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                发送
+              </button>
+            </div>
+          </div>
         ) : isUser ? (
           <div className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
             {message.content}
@@ -64,6 +122,11 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           {!isUser && !streaming && (
             <button onClick={() => void regenerate(message.id)} className="hover:text-white/90">
               {message.status === 'error' ? '重试' : '重新生成'}
+            </button>
+          )}
+          {isUser && !streaming && !editing && (
+            <button onClick={startEdit} className="hover:text-white/90">
+              编辑
             </button>
           )}
           {!streaming && (

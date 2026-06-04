@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react';
-import { BASE_URL_PRESETS, hasUnresolvedBaseUrlTemplate } from '../../shared/types';
+import {
+  BASE_URL_PRESETS,
+  type ConnectionDiagnostic,
+  hasUnresolvedBaseUrlTemplate,
+} from '../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
+
+type TestStatus =
+  | { state: 'idle' }
+  | { state: 'loading'; message: string }
+  | { state: 'success'; message: string; detail?: string }
+  | { state: 'error'; message: string; detail?: string };
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const { settings, hasKey, save } = useSettingsStore();
@@ -10,6 +20,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
   const [temperature, setTemperature] = useState(settings.temperature);
   const [systemPrompt, setSystemPrompt] = useState(settings.systemPrompt);
   const [saveError, setSaveError] = useState('');
+  const [testStatus, setTestStatus] = useState<TestStatus>({ state: 'idle' });
   const selectedPreset = BASE_URL_PRESETS.find((preset) => preset.baseUrl === baseUrl)?.baseUrl ?? 'custom';
 
   useEffect(() => {
@@ -41,6 +52,53 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
       onClose();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const describeDiagnostic = (diagnostic: ConnectionDiagnostic): TestStatus => {
+    if (diagnostic.ok) {
+      return {
+        state: 'success',
+        message: diagnostic.message || '连接成功，当前 Key、Base URL 和模型可用。',
+        detail: diagnostic.detail,
+      };
+    }
+
+    return {
+      state: 'error',
+      message: diagnostic.message,
+      detail: diagnostic.detail,
+    };
+  };
+
+  const onTestConnection = async () => {
+    const trimmedApiKey = apiKey.trim();
+    const trimmedBaseUrl = baseUrl.trim();
+    const trimmedModel = model.trim();
+
+    if (trimmedBaseUrl && hasUnresolvedBaseUrlTemplate(trimmedBaseUrl)) {
+      setTestStatus({
+        state: 'error',
+        message: '请先把 Base URL 里的 {WorkspaceId} 替换成你的工作空间 ID。',
+      });
+      return;
+    }
+
+    setTestStatus({ state: 'loading', message: '正在测试连接...' });
+    try {
+      const diagnostic = await window.qwen.testConnection({
+        baseUrl: trimmedBaseUrl,
+        model: trimmedModel,
+        temperature,
+        systemPrompt,
+        ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
+      });
+      setTestStatus(describeDiagnostic(diagnostic));
+    } catch (error) {
+      setTestStatus({
+        state: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -121,13 +179,41 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
           </div>
         )}
 
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm">
-            取消
+        {testStatus.state !== 'idle' && (
+          <div
+            className={`mb-4 rounded border px-3 py-2 text-sm [overflow-wrap:anywhere] ${
+              testStatus.state === 'success'
+                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                : testStatus.state === 'loading'
+                  ? 'border-white/10 bg-white/5 text-white/60'
+                  : 'border-red-400/30 bg-red-500/10 text-red-200'
+            }`}
+          >
+            <div>{testStatus.message}</div>
+            {'detail' in testStatus && testStatus.detail && (
+              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-black/25 p-2 font-mono text-[11px] leading-relaxed">
+                {testStatus.detail}
+              </pre>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-between gap-2">
+          <button
+            onClick={() => void onTestConnection()}
+            disabled={testStatus.state === 'loading'}
+            className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {testStatus.state === 'loading' ? '测试中...' : '测试连接'}
           </button>
-          <button onClick={() => void onSave()} className="px-4 py-2 rounded-lg bg-sky-500/90 hover:bg-sky-500 text-sm">
-            保存
-          </button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm">
+              取消
+            </button>
+            <button onClick={() => void onSave()} className="px-4 py-2 rounded-lg bg-sky-500/90 hover:bg-sky-500 text-sm">
+              保存
+            </button>
+          </div>
         </div>
       </div>
     </div>
