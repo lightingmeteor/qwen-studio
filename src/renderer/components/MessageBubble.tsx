@@ -1,13 +1,42 @@
 import { useState } from 'react';
-import { type ChatMessage } from '../../shared/types';
+import { type ChatMessage, type ToolEvent } from '../../shared/types';
 import { useChatStore } from '../store/chatStore';
 import MarkdownMessage from './MarkdownMessage';
+
+const TOOL_STATUS_LABELS: Record<ToolEvent['status'], string> = {
+  started: '进行中',
+  completed: '完成',
+  failed: '失败',
+};
+
+const TOOL_STATUS_STYLES: Record<ToolEvent['status'], string> = {
+  started: 'bg-sky-300',
+  completed: 'bg-emerald-300',
+  failed: 'bg-red-300',
+};
+
+function compactDetail(detail: string, maxLength = 140): string {
+  const normalized = detail.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function describeToolEvents(events: ToolEvent[]): string {
+  const failed = events.filter((event) => event.status === 'failed').length;
+  const active = events.filter((event) => event.status === 'started').length;
+  const completed = events.filter((event) => event.status === 'completed').length;
+
+  if (active > 0) return `工具运行中 (${active}/${events.length})`;
+  if (failed > 0) return `工具有失败 (${failed}/${events.length})`;
+  return `工具已完成 (${completed}/${events.length})`;
+}
 
 export default function MessageBubble({ message }: { message: ChatMessage }): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [editError, setEditError] = useState('');
+  const [toolsOpen, setToolsOpen] = useState(false);
   const regenerate = useChatStore((s) => s.regenerate);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const editAndResend = useChatStore((s) => s.editAndResend);
@@ -15,6 +44,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
     s.activeId ? Boolean(s.streamingByConversation[s.activeId]) : false,
   );
   const isUser = message.role === 'user';
+  const toolEvents = isUser ? [] : (message.toolEvents ?? []);
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -122,6 +152,48 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           </div>
         ) : (
           <MarkdownMessage content={message.content || (message.status === 'streaming' ? '▍' : '')} />
+        )}
+
+        {toolEvents.length > 0 && (
+          <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black/15 text-xs text-white/60">
+            <button
+              type="button"
+              onClick={() => setToolsOpen((open) => !open)}
+              className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left hover:bg-white/5"
+            >
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                  toolEvents.some((event) => event.status === 'failed')
+                    ? TOOL_STATUS_STYLES.failed
+                    : toolEvents.some((event) => event.status === 'started')
+                      ? TOOL_STATUS_STYLES.started
+                      : TOOL_STATUS_STYLES.completed
+                }`}
+              />
+              <span className="min-w-0 flex-1 font-medium text-white/70 [overflow-wrap:anywhere]">
+                {describeToolEvents(toolEvents)}
+              </span>
+              <span className="shrink-0 text-white/35">{toolsOpen ? '收起' : '展开'}</span>
+            </button>
+            {toolsOpen && (
+              <div className="space-y-2 border-t border-white/10 px-3 py-2">
+                {toolEvents.map((event) => (
+                  <div key={event.id} className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TOOL_STATUS_STYLES[event.status]}`} />
+                      <span className="shrink-0 text-white/45">{TOOL_STATUS_LABELS[event.status]}</span>
+                      <span className="min-w-0 flex-1 text-white/75 [overflow-wrap:anywhere]">{event.title}</span>
+                    </div>
+                    {event.detail && (
+                      <div className="mt-1 pl-3 text-[11px] leading-relaxed text-white/45 [overflow-wrap:anywhere]">
+                        {compactDetail(event.detail)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {message.aborted && <div className="text-xs text-white/40 mt-1">（已停止）</div>}

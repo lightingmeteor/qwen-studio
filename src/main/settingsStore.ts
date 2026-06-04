@@ -1,6 +1,6 @@
 import { safeStorage } from 'electron';
 import Store from 'electron-store';
-import { type AppSettings, DEFAULT_SETTINGS } from '../shared/types';
+import { type ApiMode, type AppSettings, DEFAULT_SETTINGS } from '../shared/types';
 
 interface Persisted {
   settings: AppSettings;
@@ -36,12 +36,35 @@ const store = new Store<Persisted>({
   defaults: { settings: DEFAULT_SETTINGS },
 });
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function isApiMode(value: unknown): value is ApiMode {
+  return value === 'chat_completions' || value === 'responses';
+}
+
+function normalizeSettings(value: unknown): AppSettings {
+  const candidate = isRecord(value) ? value : {};
+  const settings = { ...DEFAULT_SETTINGS, ...candidate } as AppSettings;
+
+  if (!isApiMode(candidate.apiMode)) {
+    settings.apiMode = DEFAULT_SETTINGS.apiMode;
+  }
+
+  if (typeof candidate.webSearchEnabled !== 'boolean') {
+    settings.webSearchEnabled = DEFAULT_SETTINGS.webSearchEnabled;
+  }
+
+  return settings;
+}
+
 export function getSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...store.get('settings') };
+  return normalizeSettings(store.get('settings'));
 }
 
 export function saveSettings(patch: Partial<AppSettings>): void {
-  store.set('settings', { ...getSettings(), ...patch });
+  store.set('settings', normalizeSettings({ ...getSettings(), ...patch }));
 }
 
 export function setApiKey(key: string): void {
