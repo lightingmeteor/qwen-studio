@@ -59,6 +59,26 @@ describe('sortConversationsForDisplay', () => {
       sortConversationsForDisplay(conversations, { includeArchived: true }).map((item) => item.id),
     ).toEqual(['archived', 'visible']);
   });
+
+  it('only treats strict true pinned and archived values as enabled', () => {
+    const conversations = [
+      {
+        ...conversation({ id: 'malformed-pinned', updatedAt: 100 }),
+        pinned: 'true',
+      },
+      {
+        ...conversation({ id: 'malformed-archived', updatedAt: 200 }),
+        archived: 'true',
+      },
+      conversation({ id: 'strict-pinned', pinned: true, updatedAt: 50 }),
+    ] as unknown as Conversation[];
+
+    expect(sortConversationsForDisplay(conversations).map((item) => item.id)).toEqual([
+      'strict-pinned',
+      'malformed-archived',
+      'malformed-pinned',
+    ]);
+  });
 });
 
 describe('filterConversations', () => {
@@ -110,6 +130,33 @@ describe('filterConversations', () => {
     expect(
       filterConversations(conversations, { filter: 'all', query: 'bill' }).map((item) => item.id),
     ).toEqual(['visible-match']);
+  });
+
+  it('does not treat malformed pinned or archived values as true while filtering', () => {
+    const conversations = [
+      {
+        ...conversation({ id: 'malformed-pinned', title: 'Malformed pinned', updatedAt: 300 }),
+        pinned: 'true',
+      },
+      {
+        ...conversation({ id: 'malformed-archived', title: 'Malformed archived', updatedAt: 200 }),
+        archived: 'true',
+      },
+      conversation({ id: 'strict-pinned', pinned: true, title: 'Strict pinned', updatedAt: 100 }),
+      conversation({ id: 'strict-archived', archived: true, title: 'Strict archived', updatedAt: 400 }),
+    ] as unknown as Conversation[];
+
+    expect(filterConversations(conversations, { filter: 'all' }).map((item) => item.id)).toEqual([
+      'strict-pinned',
+      'malformed-pinned',
+      'malformed-archived',
+    ]);
+    expect(filterConversations(conversations, { filter: 'pinned' }).map((item) => item.id)).toEqual([
+      'strict-pinned',
+    ]);
+    expect(filterConversations(conversations, { filter: 'archived' }).map((item) => item.id)).toEqual([
+      'strict-archived',
+    ]);
   });
 });
 

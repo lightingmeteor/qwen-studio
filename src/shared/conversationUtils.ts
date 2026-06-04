@@ -29,10 +29,10 @@ export function sortConversationsForDisplay(
 ): Conversation[] {
   const visible = options.includeArchived
     ? [...conversations]
-    : conversations.filter((conversation) => !conversation.archived);
+    : conversations.filter((conversation) => !isArchived(conversation));
 
   return visible.sort((left, right) => {
-    const pinnedDelta = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+    const pinnedDelta = Number(isPinned(right)) - Number(isPinned(left));
     if (pinnedDelta !== 0) {
       return pinnedDelta;
     }
@@ -50,14 +50,14 @@ export function filterConversations(
 
   const filtered = sorted.filter((conversation) => {
     if (options.filter === 'pinned') {
-      return Boolean(conversation.pinned) && !conversation.archived;
+      return isPinned(conversation) && !isArchived(conversation);
     }
 
     if (options.filter === 'archived') {
-      return Boolean(conversation.archived);
+      return isArchived(conversation);
     }
 
-    return !conversation.archived;
+    return !isArchived(conversation);
   });
 
   return searchConversations(filtered, options.query ?? '');
@@ -128,4 +128,12 @@ function formatRole(role: ChatMessage['role']): string {
 
 function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toISOString();
+}
+
+function isPinned(conversation: Conversation): boolean {
+  return conversation.pinned === true;
+}
+
+function isArchived(conversation: Conversation): boolean {
+  return conversation.archived === true;
 }
