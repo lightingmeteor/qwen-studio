@@ -168,4 +168,28 @@ describe('settingsStore settings persistence', () => {
       webSearchEnabled: false,
     });
   });
+
+  it('repairs malformed persisted settings fields to defaults', async () => {
+    const { mod } = await importSettingsStore({
+      initialData: {
+        settings: {
+          baseUrl: 42,
+          model: null,
+          temperature: '0.7',
+          systemPrompt: false,
+          apiMode: 'responses',
+          webSearchEnabled: true,
+        },
+      },
+    });
+
+    expect(mod.getSettings()).toMatchObject({
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+      temperature: 0.7,
+      systemPrompt: 'You are Qwen, a helpful assistant.',
+      apiMode: 'responses',
+      webSearchEnabled: true,
+    });
+  });
 });

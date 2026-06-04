@@ -177,8 +177,8 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
             </button>
             {toolsOpen && (
               <div className="space-y-2 border-t border-white/10 px-3 py-2">
-                {toolEvents.map((event) => (
-                  <div key={event.id} className="min-w-0">
+                {toolEvents.map((event, index) => (
+                  <div key={`${event.id}:${event.status}:${index}`} className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TOOL_STATUS_STYLES[event.status]}`} />
                       <span className="shrink-0 text-white/45">{TOOL_STATUS_LABELS[event.status]}</span>

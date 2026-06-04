@@ -40,23 +40,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function isApiMode(value: unknown): value is ApiMode {
   return value === 'chat_completions' || value === 'responses';
 }
 
 function normalizeSettings(value: unknown): AppSettings {
   const candidate = isRecord(value) ? value : {};
-  const settings = { ...DEFAULT_SETTINGS, ...candidate } as AppSettings;
 
-  if (!isApiMode(candidate.apiMode)) {
-    settings.apiMode = DEFAULT_SETTINGS.apiMode;
-  }
-
-  if (typeof candidate.webSearchEnabled !== 'boolean') {
-    settings.webSearchEnabled = DEFAULT_SETTINGS.webSearchEnabled;
-  }
-
-  return settings;
+  return {
+    baseUrl:
+      typeof candidate.baseUrl === 'string'
+        ? candidate.baseUrl
+        : DEFAULT_SETTINGS.baseUrl,
+    model:
+      typeof candidate.model === 'string'
+        ? candidate.model
+        : DEFAULT_SETTINGS.model,
+    temperature: isFiniteNumber(candidate.temperature)
+      ? candidate.temperature
+      : DEFAULT_SETTINGS.temperature,
+    systemPrompt:
+      typeof candidate.systemPrompt === 'string'
+        ? candidate.systemPrompt
+        : DEFAULT_SETTINGS.systemPrompt,
+    apiMode: isApiMode(candidate.apiMode) ? candidate.apiMode : DEFAULT_SETTINGS.apiMode,
+    webSearchEnabled:
+      typeof candidate.webSearchEnabled === 'boolean'
+        ? candidate.webSearchEnabled
+        : DEFAULT_SETTINGS.webSearchEnabled,
+  };
 }
 
 export function getSettings(): AppSettings {
