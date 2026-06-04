@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BASE_URL_PRESETS } from '../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
@@ -9,6 +10,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
   const [temperature, setTemperature] = useState(settings.temperature);
   const [systemPrompt, setSystemPrompt] = useState(settings.systemPrompt);
   const [saveError, setSaveError] = useState('');
+  const selectedPreset = BASE_URL_PRESETS.find((preset) => preset.baseUrl === baseUrl)?.baseUrl ?? 'custom';
 
   useEffect(() => {
     setBaseUrl(settings.baseUrl);
@@ -54,12 +56,31 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
           className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-4"
         />
 
-        <label className="block text-sm mb-1 text-white/70">Base URL</label>
+        <label className="block text-sm mb-1 text-white/70">地域 / Base URL</label>
+        <select
+          value={selectedPreset}
+          onChange={(e) => {
+            if (e.target.value !== 'custom') {
+              setBaseUrl(e.target.value);
+            }
+          }}
+          className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-2"
+        >
+          {BASE_URL_PRESETS.map((preset) => (
+            <option key={preset.baseUrl} value={preset.baseUrl} className="bg-[#161a23]">
+              {preset.label}
+            </option>
+          ))}
+          <option value="custom" className="bg-[#161a23]">
+            Custom
+          </option>
+        </select>
         <input
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-4"
+          className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-sm mb-2"
         />
+        <p className="text-xs text-white/50 mb-4">API Key 必须与 Base URL 地域匹配；非中国大陆 key 请切换到对应地域。</p>
 
         <label className="block text-sm mb-1 text-white/70">默认模型</label>
         <input

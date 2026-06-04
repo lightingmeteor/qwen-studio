@@ -47,8 +47,32 @@ export interface ChatUsageEvent { requestId: string; usage: Usage; }
 export interface ChatDoneEvent { requestId: string; aborted?: boolean; }
 export interface ChatErrorEvent { requestId: string; message: string; }
 
+export interface BaseUrlPreset {
+  label: string;
+  baseUrl: string;
+}
+
+export const BASE_URL_PRESETS = [
+  {
+    label: 'China Beijing',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  },
+  {
+    label: 'Singapore',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  },
+  {
+    label: 'US Virginia',
+    baseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+  },
+  {
+    label: 'Hong Kong China',
+    baseUrl: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
+  },
+] as const satisfies readonly BaseUrlPreset[];
+
 export const DEFAULT_SETTINGS: AppSettings = {
-  baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  baseUrl: BASE_URL_PRESETS[0].baseUrl,
   model: 'qwen-plus',
   temperature: 0.7,
   systemPrompt: 'You are Qwen, a helpful assistant.',
