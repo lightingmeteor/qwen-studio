@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BASE_URL_PRESETS,
   type ConnectionDiagnostic,
@@ -12,6 +12,22 @@ type TestStatus =
   | { state: 'success'; message: string; detail?: string }
   | { state: 'error'; message: string; detail?: string };
 
+function buildTestSnapshot(values: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  systemPrompt: string;
+}): string {
+  return JSON.stringify({
+    apiKey: values.apiKey.trim(),
+    baseUrl: values.baseUrl.trim(),
+    model: values.model.trim(),
+    temperature: values.temperature,
+    systemPrompt: values.systemPrompt,
+  });
+}
+
 export default function SettingsDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const { settings, hasKey, save } = useSettingsStore();
   const [apiKey, setApiKey] = useState('');
@@ -21,6 +37,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
   const [systemPrompt, setSystemPrompt] = useState(settings.systemPrompt);
   const [saveError, setSaveError] = useState('');
   const [testStatus, setTestStatus] = useState<TestStatus>({ state: 'idle' });
+  const latestTestSnapshot = useRef('');
   const selectedPreset = BASE_URL_PRESETS.find((preset) => preset.baseUrl === baseUrl)?.baseUrl ?? 'custom';
 
   useEffect(() => {
@@ -29,6 +46,17 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
     setTemperature(settings.temperature);
     setSystemPrompt(settings.systemPrompt);
   }, [settings]);
+
+  useEffect(() => {
+    latestTestSnapshot.current = buildTestSnapshot({
+      apiKey,
+      baseUrl,
+      model,
+      temperature,
+      systemPrompt,
+    });
+    setTestStatus((status) => (status.state === 'idle' ? status : { state: 'idle' }));
+  }, [apiKey, baseUrl, model, temperature, systemPrompt]);
 
   const onSave = async () => {
     const trimmedApiKey = apiKey.trim();
@@ -75,6 +103,13 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
     const trimmedApiKey = apiKey.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
+    const submittedSnapshot = buildTestSnapshot({
+      apiKey,
+      baseUrl,
+      model,
+      temperature,
+      systemPrompt,
+    });
 
     if (trimmedBaseUrl && hasUnresolvedBaseUrlTemplate(trimmedBaseUrl)) {
       setTestStatus({
@@ -93,8 +128,14 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): JS
         systemPrompt,
         ...(trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
       });
+      if (latestTestSnapshot.current !== submittedSnapshot) {
+        return;
+      }
       setTestStatus(describeDiagnostic(diagnostic));
     } catch (error) {
+      if (latestTestSnapshot.current !== submittedSnapshot) {
+        return;
+      }
       setTestStatus({
         state: 'error',
         message: error instanceof Error ? error.message : String(error),

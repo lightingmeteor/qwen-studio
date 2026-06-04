@@ -74,11 +74,11 @@ export default function Sidebar({ onOpenSettings }: { onOpenSettings: () => void
           <div
             key={c.id}
             onClick={() => selectConversation(c.id)}
-            className={`group flex items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer ${
+            className={`group flex min-w-0 items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer ${
               c.id === activeId ? 'bg-white/15' : 'hover:bg-white/5'
             }`}
           >
-            <span className="truncate flex-1">
+            <span className="min-w-0 truncate flex-1">
               {c.pinned && !c.archived ? <span className="mr-1 text-white/40">★</span> : null}
               {c.title}
             </span>

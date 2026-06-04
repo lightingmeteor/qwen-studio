@@ -8,7 +8,7 @@ import ChatInput from '../components/ChatInput';
 import ModelSelect from '../components/ModelSelect';
 import WelcomeState from '../components/WelcomeState';
 
-type ExportStatus = { tone: 'success' | 'muted' | 'error'; text: string };
+type ExportStatus = { tone: 'success' | 'error'; text: string };
 
 export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
   const conversations = useChatStore((s) => s.conversations);
@@ -58,6 +58,7 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
   };
 
   const exportMarkdown = async () => {
+    setExportStatus(null);
     try {
       describeExportResult(await exportActiveConversationMarkdown(), 'Markdown');
     } catch (error) {
@@ -66,6 +67,7 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
   };
 
   const exportJson = async () => {
+    setExportStatus(null);
     try {
       describeExportResult(await exportAllConversationsJson(), 'JSON');
     } catch (error) {
@@ -93,9 +95,7 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
               className={`hidden sm:block max-w-40 truncate text-xs ${
                 exportStatus.tone === 'error'
                   ? 'text-red-300'
-                  : exportStatus.tone === 'success'
-                    ? 'text-emerald-300'
-                    : 'text-white/40'
+                  : 'text-emerald-300'
               }`}
               title={exportStatus.text}
             >

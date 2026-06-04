@@ -7,6 +7,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const [editError, setEditError] = useState('');
   const regenerate = useChatStore((s) => s.regenerate);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const editAndResend = useChatStore((s) => s.editAndResend);
@@ -23,12 +24,14 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
 
   const startEdit = () => {
     setDraft(message.content);
+    setEditError('');
     setEditing(true);
   };
 
   const submitEdit = async () => {
     const content = draft.trim();
     if (!content) return;
+    setEditError('');
     if (content === message.content.trim()) {
       setEditing(false);
       return;
@@ -36,9 +39,19 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
 
     try {
       await editAndResend(message.id, content);
+      const originalMessageStillExists = useChatStore
+        .getState()
+        .conversations.some((conversation) =>
+          conversation.messages.some((item) => item.id === message.id),
+        );
+      if (originalMessageStillExists) {
+        setEditError('无法发送，请检查 API Key 或当前生成状态。');
+        return;
+      }
       setEditing(false);
     } catch (error) {
       console.error(error);
+      setEditError('无法发送，请检查 API Key 或当前生成状态。');
     }
   };
 
@@ -69,7 +82,10 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           <div className="space-y-2">
             <textarea
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setEditError('');
+              }}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                   e.preventDefault();
@@ -83,6 +99,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
               className="w-full min-w-[220px] resize-y rounded border border-sky-300/30 bg-black/20 px-3 py-2 text-sm leading-relaxed text-white outline-none focus:border-sky-300/70"
               autoFocus
             />
+            {editError && <div className="text-xs text-red-200/90">{editError}</div>}
             <div className="flex justify-end gap-2 text-xs">
               <button
                 onClick={() => setEditing(false)}
