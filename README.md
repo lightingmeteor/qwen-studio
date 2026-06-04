@@ -9,7 +9,7 @@
 Windows 使用方式：
 
 1. 打开 [Releases](https://github.com/lightingmeteor/qwen-studio/releases/latest)。
-2. 下载 Windows 安装包 `Qwen Studio Desktop Setup 0.1.0.exe`。
+2. 下载 Windows 安装包 `Qwen.Studio.Desktop.Setup.0.1.0.exe`。
 3. 双击运行 `.exe` 安装包。
 4. 按安装向导完成安装，然后从开始菜单或桌面快捷方式打开 `Qwen Studio Desktop`。
 5. 如果 Windows Defender SmartScreen 提示应用发布者未知，确认下载来源是本项目 Releases 后，点击「更多信息」->「仍要运行」。
