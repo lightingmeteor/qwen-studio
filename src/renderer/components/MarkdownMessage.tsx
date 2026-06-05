@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 import { normalizeExternalUrl } from '../../shared/externalLinks';
+import { rehypeHighlightSubset } from '../rehypeHighlightSubset';
 
 function extractText(node: ReactNode): string {
   if (typeof node === 'string') return node;
@@ -64,7 +65,7 @@ export default function MarkdownMessage({ content }: { content: string }): JSX.E
     <div className="prose-invert min-w-0 max-w-none break-words leading-relaxed [overflow-wrap:anywhere] [&_table]:border-collapse [&_td]:border [&_th]:border [&_td]:border-white/15 [&_th]:border-white/15 [&_td]:px-2 [&_th]:px-2 [&_a]:text-sky-400 [&_code]:rounded [&_:not(pre)>code]:bg-white/10 [&_:not(pre)>code]:px-1">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={[rehypeHighlightSubset]}
         components={{
           a: ({ href, children }) => <ExternalLink href={href}>{children}</ExternalLink>,
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,

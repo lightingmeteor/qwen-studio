@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { type ChatMessage, type ToolEvent } from '../../shared/types';
 import { useChatStore } from '../store/chatStore';
-import MarkdownMessage from './MarkdownMessage';
+
+const MarkdownMessage = React.lazy(() => import('./MarkdownMessage'));
 
 const TOOL_STATUS_LABELS: Record<ToolEvent['status'], string> = {
   started: '进行中',
@@ -45,6 +46,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   );
   const isUser = message.role === 'user';
   const toolEvents = isUser ? [] : (message.toolEvents ?? []);
+  const assistantContent = message.content || (message.status === 'streaming' ? '▍' : '');
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -151,7 +153,15 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
             {message.content}
           </div>
         ) : (
-          <MarkdownMessage content={message.content || (message.status === 'streaming' ? '▍' : '')} />
+          <Suspense
+            fallback={
+              <div className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                {assistantContent}
+              </div>
+            }
+          >
+            <MarkdownMessage content={assistantContent} />
+          </Suspense>
         )}
 
         {toolEvents.length > 0 && (

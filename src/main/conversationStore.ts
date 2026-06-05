@@ -11,12 +11,14 @@ import { sortConversationsForDisplay } from '../shared/conversationUtils';
 
 interface Persisted {
   conversations: Conversation[];
+  [key: `conversations_corrupt_${number}`]: unknown;
 }
 
 const store = new Store<Persisted>({
   name: 'qwen-studio-conversations',
   defaults: { conversations: [] },
 });
+let conversationsCache: Conversation[] | undefined;
 
 const CHAT_ROLES = ['system', 'user', 'assistant'] as const;
 const MESSAGE_STATUSES = ['pending', 'streaming', 'done', 'error'] as const;
@@ -276,12 +278,23 @@ function repairConversation(value: unknown): { conversation?: Conversation; repa
   return { conversation, repaired: conversationRepaired };
 }
 
+function writeConversations(conversations: Conversation[]): void {
+  conversationsCache = conversations;
+  store.set('conversations', conversations);
+}
+
 function getConversations(): Conversation[] {
+  if (conversationsCache !== undefined) {
+    return conversationsCache;
+  }
+
   const persisted = store.get('conversations') as unknown;
 
   if (!Array.isArray(persisted)) {
-    store.set('conversations', []);
-    return [];
+    store.set(`conversations_corrupt_${Date.now()}`, persisted);
+    const conversations: Conversation[] = [];
+    writeConversations(conversations);
+    return conversations;
   }
 
   let repaired = false;
@@ -301,11 +314,13 @@ function getConversations(): Conversation[] {
     return acc;
   }, []);
 
+  conversationsCache = conversations;
+
   if (repaired) {
     store.set('conversations', conversations);
   }
 
-  return conversations;
+  return conversationsCache;
 }
 
 export function listConversations(): Conversation[] {
@@ -325,13 +340,12 @@ export function createConversation(title = '新会话'): Conversation {
     createdAt: now,
     updatedAt: now,
   };
-  store.set('conversations', [conv, ...getConversations()]);
+  writeConversations([conv, ...getConversations()]);
   return conv;
 }
 
 export function renameConversation(id: string, title: string): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().map((c) =>
       c.id === id ? { ...c, title, updatedAt: Date.now() } : c,
     ),
@@ -339,15 +353,13 @@ export function renameConversation(id: string, title: string): void {
 }
 
 export function deleteConversation(id: string): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().filter((c) => c.id !== id),
   );
 }
 
 export function saveMessages(id: string, messages: ChatMessage[]): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().map((c) =>
       c.id === id ? { ...c, messages, updatedAt: Date.now() } : c,
     ),
@@ -375,7 +387,7 @@ function updateConversationMetadata(
     throw new Error(`Conversation not found: ${id}`);
   }
 
-  store.set('conversations', nextConversations);
+  writeConversations(nextConversations);
   return updatedConversation;
 }
 
