@@ -3,10 +3,14 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { registerIpc } from './ipc';
 import { normalizeExternalUrl } from '../shared/externalLinks';
+import { logError, logInfo, logWarn } from './logger';
 
 function openSafeExternal(rawUrl: string): void {
   const url = normalizeExternalUrl(rawUrl);
-  if (url) void shell.openExternal(url).catch(console.error);
+  if (url) {
+    logInfo('shell.openExternal', { url });
+    void shell.openExternal(url).catch((error) => logError('shell.openExternal.failed', { error }));
+  }
 }
 
 function isExpectedRendererUrl(rawUrl: string, rendererEntryUrl: string): boolean {
@@ -25,6 +29,9 @@ function isExpectedRendererUrl(rawUrl: string, rendererEntryUrl: string): boolea
 function createWindow(): void {
   const rendererEntryUrl = process.env['ELECTRON_RENDERER_URL']
     ?? pathToFileURL(join(__dirname, '../renderer/index.html')).toString();
+  logInfo('app.window.create', {
+    renderer: process.env['ELECTRON_RENDERER_URL'] ? 'dev-server' : 'file',
+  });
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -40,14 +47,19 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.on('ready-to-show', () => mainWindow.show());
+  mainWindow.on('ready-to-show', () => {
+    logInfo('app.window.ready');
+    mainWindow.show();
+  });
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (isExpectedRendererUrl(url, rendererEntryUrl)) return;
 
     event.preventDefault();
+    logWarn('navigation.external.blocked', { url });
     openSafeExternal(url);
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    logInfo('navigation.windowOpen.denied', { url });
     openSafeExternal(url);
     return { action: 'deny' };
   });
@@ -60,6 +72,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  logInfo('app.ready', { platform: process.platform, version: app.getVersion() });
   registerIpc();
   createWindow();
   app.on('activate', () => {
@@ -68,5 +81,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  logInfo('app.windowAllClosed', { platform: process.platform });
   if (process.platform !== 'darwin') app.quit();
 });

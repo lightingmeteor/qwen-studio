@@ -8,6 +8,7 @@ import {
 } from '../shared/types';
 import { genId } from '../shared/id';
 import { sortConversationsForDisplay } from '../shared/conversationUtils';
+import { logInfo, logWarn } from './logger';
 
 interface Persisted {
   conversations: Conversation[];
@@ -116,6 +117,7 @@ function isConversation(value: unknown): value is Conversation {
 }
 
 function repairMessage(value: unknown): { message?: ChatMessage; repaired: boolean } {
+  // 会话历史可能来自旧版本或异常退出后的半写入数据；这里尽量保留可用字段。
   if (isChatMessage(value)) {
     return { message: value, repaired: false };
   }
@@ -281,6 +283,10 @@ function repairConversation(value: unknown): { conversation?: Conversation; repa
 function writeConversations(conversations: Conversation[]): void {
   conversationsCache = conversations;
   store.set('conversations', conversations);
+  logInfo('conversation.write', {
+    conversationCount: conversations.length,
+    messageCount: conversations.reduce((count, item) => count + item.messages.length, 0),
+  });
 }
 
 function getConversations(): Conversation[] {
@@ -291,6 +297,7 @@ function getConversations(): Conversation[] {
   const persisted = store.get('conversations') as unknown;
 
   if (!Array.isArray(persisted)) {
+    logWarn('conversation.corrupt.backup', { reason: 'persisted value is not an array' });
     store.set(`conversations_corrupt_${Date.now()}`, persisted);
     const conversations: Conversation[] = [];
     writeConversations(conversations);
@@ -317,6 +324,7 @@ function getConversations(): Conversation[] {
   conversationsCache = conversations;
 
   if (repaired) {
+    logWarn('conversation.repaired', { conversationCount: conversations.length });
     store.set('conversations', conversations);
   }
 
