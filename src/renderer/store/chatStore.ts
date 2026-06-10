@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import {
+  type AppSettings,
+  type ChatStreamRequest,
   type Conversation,
   type ChatMessage,
   type ChatRole,
@@ -145,6 +147,48 @@ async function abortConversationStream(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function conversationHistory(
+  conversation: Conversation | undefined,
+  excludeMessageId: string,
+): { role: ChatRole; content: string }[] {
+  return (conversation?.messages ?? [])
+    .filter((m) => m.id !== excludeMessageId && (m.role === 'user' || m.role === 'assistant'))
+    .map((m) => ({ role: m.role as ChatRole, content: m.content }));
+}
+
+function withSystemPrompt(
+  systemPrompt: string,
+  messages: { role: ChatRole; content: string }[],
+): { role: ChatRole; content: string }[] {
+  return systemPrompt
+    ? [{ role: 'system' as ChatRole, content: systemPrompt }, ...messages]
+    : messages;
+}
+
+// 唯一的请求载荷拼装点：sendMessage 与 previous_response_id 失效回退共用，避免两边悄悄分叉。
+function buildStreamPayload(
+  settings: AppSettings,
+  requestId: string,
+  conversationId: string,
+  messages: { role: ChatRole; content: string }[],
+  previousResponseId?: string,
+): ChatStreamRequest {
+  return {
+    requestId,
+    conversationId,
+    model: settings.model,
+    temperature: settings.temperature,
+    messages,
+    ...(settings.apiMode === 'responses'
+      ? {
+          apiMode: settings.apiMode,
+          ...(settings.webSearchEnabled ? { tools: ['web_search' as const] } : {}),
+          ...(previousResponseId ? { previousResponseId } : {}),
+        }
+      : {}),
+  };
 }
 
 function replaceBridgeUnsubscribers(unsubscribers: Array<() => void>): void {
@@ -312,35 +356,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const conv = findConversation(get().conversations, conversationId);
-    const history = (conv?.messages ?? [])
-      .filter((m) => m.id !== assistantMsg.id && (m.role === 'user' || m.role === 'assistant'))
-      .map((m) => ({ role: m.role as ChatRole, content: m.content }));
-
-    const systemMessages = settings.systemPrompt
-      ? [{ role: 'system' as ChatRole, content: settings.systemPrompt }]
-      : [];
-    const messages =
+    const messages = withSystemPrompt(
+      settings.systemPrompt,
       settings.apiMode === 'responses' && previousResponseId
-        ? [...systemMessages, { role: 'user' as ChatRole, content }]
-        : [...systemMessages, ...history];
+        ? [{ role: 'user' as ChatRole, content }]
+        : conversationHistory(conv, assistantMsg.id),
+    );
 
     try {
-      const streamPayload = {
-        requestId,
-        conversationId,
-        model: settings.model,
-        temperature: settings.temperature,
-        messages,
-        ...(settings.apiMode === 'responses'
-          ? {
-              apiMode: settings.apiMode,
-              ...(settings.webSearchEnabled ? { tools: ['web_search' as const] } : {}),
-              ...(previousResponseId ? { previousResponseId } : {}),
-            }
-          : {}),
-      };
-
-      await window.qwen.chatStream(streamPayload);
+      await window.qwen.chatStream(
+        buildStreamPayload(settings, requestId, conversationId, messages, previousResponseId),
+      );
     } catch (error) {
       if (routing.delete(requestId)) {
         get().failMessage(requestId, conversationId, assistantMsg.id, errorMessage(error));
@@ -538,27 +564,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     const conv = findConversation(get().conversations, conversationId);
-    const history = (conv?.messages ?? [])
-      .filter((m) => m.id !== messageId && (m.role === 'user' || m.role === 'assistant'))
-      .map((m) => ({ role: m.role as ChatRole, content: m.content }));
-    const systemMessages = settings.systemPrompt
-      ? [{ role: 'system' as ChatRole, content: settings.systemPrompt }]
-      : [];
+    const messages = withSystemPrompt(
+      settings.systemPrompt,
+      conversationHistory(conv, messageId),
+    );
 
     try {
-      await window.qwen.chatStream({
-        requestId,
-        conversationId,
-        model: settings.model,
-        temperature: settings.temperature,
-        messages: [...systemMessages, ...history],
-        ...(settings.apiMode === 'responses'
-          ? {
-              apiMode: settings.apiMode,
-              ...(settings.webSearchEnabled ? { tools: ['web_search' as const] } : {}),
-            }
-          : {}),
-      });
+      await window.qwen.chatStream(
+        buildStreamPayload(settings, requestId, conversationId, messages),
+      );
     } catch (error) {
       if (routing.delete(requestId)) {
         get().failMessage(requestId, conversationId, messageId, errorMessage(error));

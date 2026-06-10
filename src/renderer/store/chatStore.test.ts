@@ -952,6 +952,39 @@ describe('chatStore streaming routing', () => {
     expect(useChatStore.getState().streamingByConversation).toEqual({});
   });
 
+  it('does not retry when the failed request never carried previous_response_id', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [makeUserMessage('m1', 'first'), makeAssistantMessage('m2', 'first reply')],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('follow up');
+    expect(fake.chatStreamCalls[0]).not.toHaveProperty('previousResponseId');
+    const requestId = useChatStore.getState().streamingByConversation.c1;
+
+    fake.emitChatError({
+      requestId,
+      message: '请求被拒绝（400）',
+      code: 'previous_response_invalid',
+    });
+    await Promise.resolve();
+
+    expect(fake.chatStreamCalls).toHaveLength(1);
+    expect(useChatStore.getState().conversations[0].messages.at(-1)).toMatchObject({
+      status: 'error',
+      error: '请求被拒绝（400）',
+    });
+  });
+
   it('does not truncate edit and resend history when the API key is missing', async () => {
     const fake = installFakeBridge();
     const messages = [
