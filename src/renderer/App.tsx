@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useChatStore, initChatBridge } from './store/chatStore';
 import { useSettingsStore } from './store/settingsStore';
 import Sidebar from './components/Sidebar';
 import ChatPage from './pages/ChatPage';
-import SettingsDialog from './components/SettingsDialog';
+
+const SettingsDialog = lazy(() => import('./components/SettingsDialog'));
 
 export default function App(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false);
@@ -27,7 +28,11 @@ export default function App(): JSX.Element {
     <div className="h-full flex">
       <Sidebar onOpenSettings={() => setShowSettings(true)} />
       <ChatPage onOpenSettings={() => setShowSettings(true)} />
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsDialog onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

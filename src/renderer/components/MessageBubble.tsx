@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { type ChatMessage, type ToolEvent } from '../../shared/types';
 import { useChatStore } from '../store/chatStore';
-import MarkdownMessage from './MarkdownMessage';
+
+const MarkdownMessage = React.lazy(() => import('./MarkdownMessage'));
 
 const TOOL_STATUS_LABELS: Record<ToolEvent['status'], string> = {
   started: '进行中',
@@ -50,6 +51,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   // 与主进程 forkConversation 的校验一致：仅 done 状态的 user/assistant 消息可分叉。
   const forkable =
     (message.role === 'user' || message.role === 'assistant') && message.status === 'done';
+  const assistantContent = message.content || (message.status === 'streaming' ? '▍' : '');
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -185,7 +187,15 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
             {message.content}
           </div>
         ) : (
-          <MarkdownMessage content={message.content || (message.status === 'streaming' ? '▍' : '')} />
+          <Suspense
+            fallback={
+              <div className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                {assistantContent}
+              </div>
+            }
+          >
+            <MarkdownMessage content={assistantContent} />
+          </Suspense>
         )}
 
         {toolEvents.length > 0 && (

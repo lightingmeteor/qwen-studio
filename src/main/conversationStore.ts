@@ -9,15 +9,18 @@ import {
 } from '../shared/types';
 import { genId } from '../shared/id';
 import { sortConversationsForDisplay } from '../shared/conversationUtils';
+import { logInfo, logWarn } from './logger';
 
 interface Persisted {
   conversations: Conversation[];
+  [key: `conversations_corrupt_${number}`]: unknown;
 }
 
 const store = new Store<Persisted>({
   name: 'qwen-studio-conversations',
   defaults: { conversations: [] },
 });
+let conversationsCache: Conversation[] | undefined;
 
 const CHAT_ROLES = ['system', 'user', 'assistant'] as const;
 const MESSAGE_STATUSES = ['pending', 'streaming', 'done', 'error'] as const;
@@ -126,6 +129,7 @@ function isConversation(value: unknown): value is Conversation {
 }
 
 function repairMessage(value: unknown): { message?: ChatMessage; repaired: boolean } {
+  // 会话历史可能来自旧版本或异常退出后的半写入数据；这里尽量保留可用字段。
   if (isChatMessage(value)) {
     return { message: value, repaired: false };
   }
@@ -295,12 +299,28 @@ function repairConversation(value: unknown): { conversation?: Conversation; repa
   return { conversation, repaired: conversationRepaired };
 }
 
+function writeConversations(conversations: Conversation[]): void {
+  conversationsCache = conversations;
+  store.set('conversations', conversations);
+  logInfo('conversation.write', {
+    conversationCount: conversations.length,
+    messageCount: conversations.reduce((count, item) => count + item.messages.length, 0),
+  });
+}
+
 function getConversations(): Conversation[] {
+  if (conversationsCache !== undefined) {
+    return conversationsCache;
+  }
+
   const persisted = store.get('conversations') as unknown;
 
   if (!Array.isArray(persisted)) {
-    store.set('conversations', []);
-    return [];
+    logWarn('conversation.corrupt.backup', { reason: 'persisted value is not an array' });
+    store.set(`conversations_corrupt_${Date.now()}`, persisted);
+    const conversations: Conversation[] = [];
+    writeConversations(conversations);
+    return conversations;
   }
 
   let repaired = false;
@@ -320,11 +340,14 @@ function getConversations(): Conversation[] {
     return acc;
   }, []);
 
+  conversationsCache = conversations;
+
   if (repaired) {
+    logWarn('conversation.repaired', { conversationCount: conversations.length });
     store.set('conversations', conversations);
   }
 
-  return conversations;
+  return conversationsCache;
 }
 
 export function listConversations(): Conversation[] {
@@ -344,7 +367,7 @@ export function createConversation(title = '新会话'): Conversation {
     createdAt: now,
     updatedAt: now,
   };
-  store.set('conversations', [conv, ...getConversations()]);
+  writeConversations([conv, ...getConversations()]);
   return conv;
 }
 
@@ -404,8 +427,7 @@ export function forkConversation(
 }
 
 export function renameConversation(id: string, title: string): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().map((c) =>
       c.id === id ? { ...c, title, updatedAt: Date.now() } : c,
     ),
@@ -413,15 +435,13 @@ export function renameConversation(id: string, title: string): void {
 }
 
 export function deleteConversation(id: string): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().filter((c) => c.id !== id),
   );
 }
 
 export function saveMessages(id: string, messages: ChatMessage[]): void {
-  store.set(
-    'conversations',
+  writeConversations(
     getConversations().map((c) =>
       c.id === id ? { ...c, messages, updatedAt: Date.now() } : c,
     ),
@@ -449,7 +469,7 @@ function updateConversationMetadata(
     throw new Error(`Conversation not found: ${id}`);
   }
 
-  store.set('conversations', nextConversations);
+  writeConversations(nextConversations);
   return updatedConversation;
 }
 

@@ -25,6 +25,7 @@ import {
 import type { SettingsPatch } from '../shared/api';
 import { normalizeExternalUrl } from '../shared/externalLinks';
 import { sanitizeDiagnosticDetail } from '../shared/diagnostics';
+import { logError, logInfo, logWarn } from './logger';
 
 interface StreamControllerEntry {
   senderId: number;
@@ -193,6 +194,7 @@ function validateToolEvent(value: unknown, field: string): ToolEvent {
 function repairOptionalToolEvents(value: unknown): ToolEvent[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
+  // 工具事件是 provider 附带的展示元数据，保存失败不应影响正文历史。
   const toolEvents = value.reduce<ToolEvent[]>((acc, event, index) => {
     try {
       acc.push(validateToolEvent(event, `toolEvents[${index}]`));
@@ -314,6 +316,7 @@ function validateBuiltInTools(value: unknown): BuiltInTool[] {
 }
 
 function validateChatStreamRequest(value: unknown): ChatStreamRequest {
+  // Renderer 进程传入的数据都视为不可信，主进程统一做白名单校验。
   const input = requireRecord(value, 'chat stream request');
   const request: ChatStreamRequest = {
     requestId: requireNonEmptyString(input.requestId, 'requestId'),
@@ -368,6 +371,7 @@ function controllerKey(senderId: number, requestId: string): string {
 }
 
 function safeSend(sender: WebContents, channel: string, payload: unknown): void {
+  // 窗口关闭后继续 send 会抛错；流式回调统一走这个安全出口。
   if (!sender.isDestroyed()) {
     sender.send(channel, payload);
   }
@@ -406,6 +410,7 @@ export function registerIpc(): void {
     const apiKey = (patchApiKey ?? getApiKey()).trim();
 
     if (isDifferentBaseUrl(settingsPatch.baseUrl, savedSettings.baseUrl) && !hasTemporaryApiKey) {
+      logWarn('diagnostics.test.rejected', { reason: 'changed baseUrl without temporary api key' });
       return {
         ok: false,
         category: 'config',
@@ -414,6 +419,7 @@ export function registerIpc(): void {
     }
 
     if (!apiKey) {
+      logWarn('diagnostics.test.missingKey');
       return {
         ok: false,
         category: 'missing_key',
@@ -422,6 +428,7 @@ export function registerIpc(): void {
     }
 
     if (hasUnresolvedBaseUrlTemplate(settings.baseUrl)) {
+      logWarn('diagnostics.test.unresolvedBaseUrlTemplate');
       return {
         ok: false,
         category: 'config',
@@ -430,11 +437,14 @@ export function registerIpc(): void {
       };
     }
 
-    return testQwenConnection({
+    logInfo('diagnostics.test.start', { baseUrl: settings.baseUrl, model: settings.model });
+    const result = await testQwenConnection({
       apiKey,
       baseUrl: settings.baseUrl,
       model: settings.model,
     });
+    logInfo('diagnostics.test.finish', { ok: result.ok, category: result.category });
+    return result;
   });
 
   ipcMain.handle('shell:openExternal', (_event, rawUrl: unknown) => {
@@ -537,6 +547,14 @@ export function registerIpc(): void {
 
     try {
       const apiMode = payload.apiMode ?? 'chat_completions';
+      logInfo('chat.stream.start', {
+        requestId: payload.requestId,
+        conversationId: payload.conversationId,
+        apiMode,
+        model: payload.model || settings.model,
+        messageCount: payload.messages.length,
+        tools: apiMode === 'responses' ? payload.tools ?? [] : [],
+      });
       const streamInput = {
         apiKey,
         baseUrl: settings.baseUrl,
@@ -567,9 +585,18 @@ export function registerIpc(): void {
 
       await defaultProvider.streamTurn(streamInput);
       safeSend(event.sender, 'chat:done', { requestId: payload.requestId });
+      logInfo('chat.stream.done', {
+        requestId: payload.requestId,
+        conversationId: payload.conversationId,
+        apiMode,
+      });
     } catch (err) {
       if (controller.signal.aborted) {
         safeSend(event.sender, 'chat:done', { requestId: payload.requestId, aborted: true });
+        logWarn('chat.stream.aborted', {
+          requestId: payload.requestId,
+          conversationId: payload.conversationId,
+        });
       } else {
         const message = err instanceof Error ? err.message : '未知错误';
         const code = codeFromError(err);
@@ -578,6 +605,11 @@ export function registerIpc(): void {
           message,
           detail: detailFromError(err),
           ...(code ? { code } : {}),
+        });
+        logError('chat.stream.error', {
+          requestId: payload.requestId,
+          conversationId: payload.conversationId,
+          error: err,
         });
       }
     } finally {
@@ -593,6 +625,7 @@ export function registerIpc(): void {
   ipcMain.handle('chat:abort', (event, rawRequestId: unknown) => {
     const requestId = requireNonEmptyString(rawRequestId, 'requestId');
     const key = controllerKey(event.sender.id, requestId);
+    logInfo('chat.abort.requested', { requestId });
     controllers.get(key)?.controller.abort();
     controllers.delete(key);
   });

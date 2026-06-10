@@ -97,6 +97,7 @@ export function buildResponsesBaseUrl(baseUrl: string): string {
   try {
     const url = new URL(trimmed);
     if (url.pathname === RESPONSES_COMPATIBLE_PATH) return url.toString().replace(/\/+$/, '');
+    // 百炼的 Responses 兼容地址和 Chat Completions 地址路径不同，内置地域在这里自动换路。
     if (isKnownResponsesHost(url.hostname) && url.pathname === CHAT_COMPATIBLE_PATH) {
       url.pathname = RESPONSES_COMPATIBLE_PATH;
       return url.toString().replace(/\/+$/, '');
@@ -217,6 +218,7 @@ function createIdleTimeoutSignal(
   let timedOut = false;
   let timer: NodeJS.Timeout | undefined;
 
+  // 只在长时间没有收到任何流式活动时超时；正常持续输出会不断续期。
   const abortFromCaller = (): void => {
     controller.abort(signal?.reason);
   };

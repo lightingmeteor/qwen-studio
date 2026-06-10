@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Conversation } from '../../shared/types';
 
 type StoreData = Record<string, unknown>;
+type StoreTrace = {
+  gets: string[];
+  sets: Array<{ key: string; value: unknown }>;
+};
 
 function message(overrides: Partial<ChatMessage> & Pick<ChatMessage, 'id'>): ChatMessage {
   return {
@@ -33,6 +37,7 @@ async function importConversationStore(initialData: StoreData = {}) {
   vi.resetModules();
 
   const data: StoreData = { ...initialData };
+  const trace: StoreTrace = { gets: [], sets: [] };
   vi.doMock('electron-store', () => ({
     default: class MockStore {
       constructor(config: { defaults?: StoreData }) {
@@ -40,17 +45,19 @@ async function importConversationStore(initialData: StoreData = {}) {
       }
 
       get(key: string) {
+        trace.gets.push(key);
         return data[key];
       }
 
       set(key: string, value: unknown) {
+        trace.sets.push({ key, value });
         data[key] = value;
       }
     },
   }));
 
   const mod = await import('../conversationStore');
-  return { mod, data };
+  return { mod, data, trace };
 }
 
 describe('conversationStore metadata repair', () => {
@@ -183,6 +190,51 @@ describe('conversationStore metadata repair', () => {
       'pinned-oldest',
       'archived-newest',
       'normal',
+    ]);
+  });
+
+  it('caches validated conversations after the first store read', async () => {
+    const first = conversation({ id: 'first', updatedAt: 100 });
+    const second = conversation({ id: 'second', updatedAt: 200 });
+    const { mod, data, trace } = await importConversationStore({ conversations: [first, second] });
+
+    expect(mod.listConversations().map((item) => item.id)).toEqual(['second', 'first']);
+    data.conversations = [conversation({ id: 'external', updatedAt: 300 })];
+
+    expect(mod.getConversation('first')).toEqual(first);
+    expect(mod.getConversation('external')).toBeUndefined();
+    expect(trace.gets).toEqual(['conversations']);
+    expect(trace.sets).toEqual([]);
+  });
+
+  it('repairs malformed conversations only on first access and keeps using the cache', async () => {
+    const repaired = conversation({ id: 'bad' });
+    const { mod, data, trace } = await importConversationStore({
+      conversations: [{ ...repaired, pinned: 'yes' }],
+    });
+
+    expect(mod.listConversations()).toEqual([repaired]);
+    expect(data.conversations).toEqual([repaired]);
+    expect(mod.getConversation('bad')).toEqual(repaired);
+    expect(mod.listConversations()).toEqual([repaired]);
+    expect(trace.gets).toEqual(['conversations']);
+    expect(trace.sets).toEqual([{ key: 'conversations', value: [repaired] }]);
+  });
+
+  it('backs up non-array conversation data before resetting it once', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-04T12:34:56.789Z'));
+    const corrupt = { not: 'an array' };
+    const { mod, data, trace } = await importConversationStore({ conversations: corrupt });
+
+    expect(mod.listConversations()).toEqual([]);
+    expect(data.conversations).toEqual([]);
+    expect(data.conversations_corrupt_1780576496789).toEqual(corrupt);
+    expect(mod.getConversation('missing')).toBeUndefined();
+    expect(trace.gets).toEqual(['conversations']);
+    expect(trace.sets).toEqual([
+      { key: 'conversations_corrupt_1780576496789', value: corrupt },
+      { key: 'conversations', value: [] },
     ]);
   });
 });
