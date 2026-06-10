@@ -26,6 +26,11 @@ export interface QwenApi {
   createConversation(title?: string): Promise<Conversation>;
   renameConversation(id: string, title: string): Promise<void>;
   deleteConversation(id: string): Promise<void>;
+  forkConversation(
+    sourceId: string,
+    messageId: string,
+    opts?: { exclusive?: boolean },
+  ): Promise<Conversation>;
   saveMessages(conversationId: string, messages: ChatMessage[]): Promise<void>;
   setConversationPinned(id: string, pinned: boolean): Promise<Conversation>;
   setConversationArchived(id: string, archived: boolean): Promise<Conversation>;

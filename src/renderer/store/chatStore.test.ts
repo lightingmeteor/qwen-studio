@@ -62,6 +62,7 @@ function makeStreamingConversation(id: string, messageId: string): Conversation 
 
 function installFakeBridge(): {
   chatStreamCalls: unknown[];
+  forkCalls: Array<{ sourceId: string; messageId: string; opts?: { exclusive?: boolean } }>;
   saveMessagesCalls: Array<{ conversationId: string; messages: ChatMessage[] }>;
   pinnedCalls: Array<{ id: string; pinned: boolean }>;
   archivedCalls: Array<{ id: string; archived: boolean }>;
@@ -77,6 +78,8 @@ function installFakeBridge(): {
   let nextConversation = 1;
   const conversations: Conversation[] = [];
   const chatStreamCalls: unknown[] = [];
+  const forkCalls: Array<{ sourceId: string; messageId: string; opts?: { exclusive?: boolean } }> =
+    [];
   const saveMessagesCalls: Array<{ conversationId: string; messages: ChatMessage[] }> = [];
   const pinnedCalls: Array<{ id: string; pinned: boolean }> = [];
   const archivedCalls: Array<{ id: string; archived: boolean }> = [];
@@ -114,6 +117,28 @@ function installFakeBridge(): {
     },
     renameConversation: async () => {},
     deleteConversation: async () => {},
+    forkConversation: async (sourceId, messageId, opts) => {
+      forkCalls.push({ sourceId, messageId, opts });
+      const source = conversations.find((item) => item.id === sourceId);
+      if (!source) throw new Error(`Conversation not found: ${sourceId}`);
+      const index = source.messages.findIndex((message) => message.id === messageId);
+      if (index < 0) throw new Error(`Message not found: ${messageId}`);
+      const forked: Conversation = {
+        ...makeConversation(`fork-${nextConversation++}`),
+        title: `${source.title}（分叉）`,
+        messages: source.messages
+          .slice(0, opts?.exclusive ? index : index + 1)
+          .map((message) => ({ ...message })),
+        forkedFrom: {
+          conversationId: sourceId,
+          messageId,
+          sourceTitle: source.title,
+          messageIndex: index + 1,
+        },
+      };
+      conversations.unshift(forked);
+      return forked;
+    },
     saveMessages: async (conversationId, messages) => {
       saveMessagesCalls.push({ conversationId, messages });
       const conversation = conversations.find((item) => item.id === conversationId);
@@ -197,6 +222,7 @@ function installFakeBridge(): {
 
   return {
     chatStreamCalls,
+    forkCalls,
     saveMessagesCalls,
     pinnedCalls,
     archivedCalls,
@@ -758,6 +784,172 @@ describe('chatStore streaming routing', () => {
     expect(fake.saveMessagesCalls).toEqual([]);
     expect(fake.chatStreamCalls).toEqual([]);
     expect(useChatStore.getState().conversations[0].messages).toEqual(conversation.messages);
+  });
+
+  it('forks from a message into a new active conversation and keeps the source untouched', async () => {
+    const fake = installFakeBridge();
+    const messages = [
+      makeUserMessage('m1', 'first'),
+      makeAssistantMessage('m2', 'first reply'),
+      makeUserMessage('m3', 'follow up'),
+      makeAssistantMessage('m4', 'second reply'),
+    ];
+    const conversation = { ...makeConversation('c1', '长对话'), messages };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+
+    await useChatStore.getState().fork('m2');
+
+    expect(fake.forkCalls).toEqual([{ sourceId: 'c1', messageId: 'm2', opts: undefined }]);
+    const state = useChatStore.getState();
+    expect(state.conversations).toHaveLength(2);
+    expect(state.conversations[0]).toMatchObject({
+      title: '长对话（分叉）',
+      forkedFrom: { conversationId: 'c1', messageId: 'm2' },
+    });
+    expect(state.conversations[0].messages.map((message) => message.id)).toEqual(['m1', 'm2']);
+    expect(state.activeId).toBe(state.conversations[0].id);
+    expect(state.conversations[1].messages).toEqual(messages);
+  });
+
+  it('forks exclusively before an edited message and sends the edited text in the fork', async () => {
+    const fake = installFakeBridge();
+    const messages = [
+      makeUserMessage('m1', 'first'),
+      makeAssistantMessage('m2', 'first reply'),
+      makeUserMessage('m3', 'old follow up'),
+      makeAssistantMessage('m4', 'old reply'),
+    ];
+    const conversation = { ...makeConversation('c1', '长对话'), messages };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+
+    await useChatStore.getState().forkAndResend('m3', ' revised follow up ');
+
+    expect(fake.forkCalls).toEqual([
+      { sourceId: 'c1', messageId: 'm3', opts: { exclusive: true } },
+    ]);
+    const state = useChatStore.getState();
+    const forked = state.conversations[0];
+    expect(state.activeId).toBe(forked.id);
+    expect(forked.messages.map((message) => message.content)).toEqual([
+      'first',
+      'first reply',
+      'revised follow up',
+      '',
+    ]);
+    expect(fake.chatStreamCalls).toHaveLength(1);
+    const payload = fake.chatStreamCalls[0] as { conversationId: string; messages: Array<{ content: string }> };
+    expect(payload.conversationId).toBe(forked.id);
+    expect(payload.messages.at(-1)).toMatchObject({ content: 'revised follow up' });
+    // 原会话完全不变。
+    expect(state.conversations[1].messages).toEqual(messages);
+  });
+
+  it('retries once with full history when previous_response_id is rejected as invalid', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [
+        makeUserMessage('m1', 'first'),
+        {
+          ...makeAssistantMessage('m2', 'first reply'),
+          provider: 'responses' as const,
+          providerResponseId: 'resp-stale',
+        },
+      ],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, apiMode: 'responses' },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('follow up');
+    expect(fake.chatStreamCalls[0]).toMatchObject({ previousResponseId: 'resp-stale' });
+    const failedRequestId = useChatStore.getState().streamingByConversation.c1;
+
+    fake.emitChatError({
+      requestId: failedRequestId,
+      message: '请求被拒绝（400）',
+      code: 'previous_response_invalid',
+    });
+    await Promise.resolve();
+
+    expect(fake.chatStreamCalls).toHaveLength(2);
+    const retryPayload = fake.chatStreamCalls[1] as Record<string, unknown>;
+    expect(retryPayload).not.toHaveProperty('previousResponseId');
+    expect(retryPayload).toMatchObject({
+      apiMode: 'responses',
+      messages: [
+        { role: 'system', content: DEFAULT_SETTINGS.systemPrompt },
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'first reply' },
+        { role: 'user', content: 'follow up' },
+      ],
+    });
+    // 占位消息保持流式中，没有进入错误态。
+    expect(useChatStore.getState().conversations[0].messages.at(-1)).toMatchObject({
+      status: 'streaming',
+    });
+    const retryRequestId = useChatStore.getState().streamingByConversation.c1;
+    expect(retryRequestId).not.toBe(failedRequestId);
+
+    fake.emitChatDone({ requestId: retryRequestId });
+    expect(useChatStore.getState().conversations[0].messages.at(-1)).toMatchObject({
+      status: 'done',
+    });
+  });
+
+  it('surfaces the error without looping when the fallback retry also fails', async () => {
+    const fake = installFakeBridge();
+    initChatBridge();
+    const conversation = {
+      ...makeConversation('c1'),
+      messages: [
+        makeUserMessage('m1', 'first'),
+        {
+          ...makeAssistantMessage('m2', 'first reply'),
+          provider: 'responses' as const,
+          providerResponseId: 'resp-stale',
+        },
+      ],
+    };
+    fake.conversations.push(conversation);
+    useChatStore.setState({ conversations: [conversation], activeId: 'c1' });
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, apiMode: 'responses' },
+      hasKey: true,
+      loaded: true,
+    });
+
+    await useChatStore.getState().sendMessage('follow up');
+    const failedRequestId = useChatStore.getState().streamingByConversation.c1;
+    fake.emitChatError({
+      requestId: failedRequestId,
+      message: '请求被拒绝（400）',
+      code: 'previous_response_invalid',
+    });
+    await Promise.resolve();
+    expect(fake.chatStreamCalls).toHaveLength(2);
+
+    const retryRequestId = useChatStore.getState().streamingByConversation.c1;
+    fake.emitChatError({
+      requestId: retryRequestId,
+      message: '回退后仍然失败',
+      code: 'previous_response_invalid',
+    });
+    await Promise.resolve();
+
+    expect(fake.chatStreamCalls).toHaveLength(2);
+    expect(useChatStore.getState().conversations[0].messages.at(-1)).toMatchObject({
+      status: 'error',
+      error: '回退后仍然失败',
+    });
+    expect(useChatStore.getState().streamingByConversation).toEqual({});
   });
 
   it('does not truncate edit and resend history when the API key is missing', async () => {

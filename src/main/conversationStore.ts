@@ -4,6 +4,7 @@ import {
   type BuiltInTool,
   type Conversation,
   type ChatMessage,
+  type ForkOrigin,
   type ToolEvent,
 } from '../shared/types';
 import { genId } from '../shared/id';
@@ -98,6 +99,16 @@ function isChatMessage(value: unknown): value is ChatMessage {
   );
 }
 
+function isForkOrigin(value: unknown): value is ForkOrigin {
+  return (
+    isRecord(value) &&
+    typeof value.conversationId === 'string' &&
+    typeof value.messageId === 'string' &&
+    typeof value.sourceTitle === 'string' &&
+    isFiniteNumber(value.messageIndex)
+  );
+}
+
 function isConversation(value: unknown): value is Conversation {
   if (!isRecord(value)) return false;
 
@@ -109,7 +120,8 @@ function isConversation(value: unknown): value is Conversation {
     isFiniteNumber(value.createdAt) &&
     isFiniteNumber(value.updatedAt) &&
     (value.pinned === undefined || typeof value.pinned === 'boolean') &&
-    (value.archived === undefined || typeof value.archived === 'boolean')
+    (value.archived === undefined || typeof value.archived === 'boolean') &&
+    (value.forkedFrom === undefined || isForkOrigin(value.forkedFrom))
   );
 }
 
@@ -272,6 +284,13 @@ function repairConversation(value: unknown): { conversation?: Conversation; repa
       conversationRepaired = true;
     }
   }
+  if (value.forkedFrom !== undefined) {
+    if (isForkOrigin(value.forkedFrom)) {
+      conversation.forkedFrom = value.forkedFrom;
+    } else {
+      conversationRepaired = true;
+    }
+  }
 
   return { conversation, repaired: conversationRepaired };
 }
@@ -327,6 +346,61 @@ export function createConversation(title = '新会话'): Conversation {
   };
   store.set('conversations', [conv, ...getConversations()]);
   return conv;
+}
+
+export interface ForkConversationOptions {
+  /** true 时只复制分叉点之前的消息（不含分叉点），用于"分叉后编辑"。 */
+  exclusive?: boolean;
+}
+
+export function forkConversation(
+  sourceId: string,
+  messageId: string,
+  opts: ForkConversationOptions = {},
+): Conversation {
+  const conversations = getConversations();
+  const source = conversations.find((c) => c.id === sourceId);
+  if (!source) {
+    throw new Error(`Conversation not found: ${sourceId}`);
+  }
+
+  const forkIndex = source.messages.findIndex((m) => m.id === messageId);
+  if (forkIndex < 0) {
+    throw new Error(`Message not found: ${messageId}`);
+  }
+
+  const forkPoint = source.messages[forkIndex];
+  if (forkPoint.role !== 'user' && forkPoint.role !== 'assistant') {
+    throw new Error(`Fork point must be a user or assistant message: ${messageId}`);
+  }
+  if (forkPoint.status !== 'done') {
+    throw new Error(`Fork point message must be done: ${messageId}`);
+  }
+
+  // 1-based 序号快照，按 user/assistant 可见消息计，供分叉来源横幅"第 N 条"展示。
+  const messageIndex = source.messages
+    .slice(0, forkIndex + 1)
+    .filter((m) => m.role === 'user' || m.role === 'assistant').length;
+
+  const copied = structuredClone(
+    source.messages.slice(0, opts.exclusive ? forkIndex : forkIndex + 1),
+  );
+  const now = Date.now();
+  const forked: Conversation = {
+    id: genId('c'),
+    title: `${source.title}（分叉）`,
+    messages: copied,
+    createdAt: now,
+    updatedAt: now,
+    forkedFrom: {
+      conversationId: source.id,
+      messageId: forkPoint.id,
+      sourceTitle: source.title,
+      messageIndex,
+    },
+  };
+  store.set('conversations', [forked, ...conversations]);
+  return forked;
 }
 
 export function renameConversation(id: string, title: string): void {

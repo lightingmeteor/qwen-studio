@@ -284,6 +284,59 @@ describe('streamQwenResponses', () => {
       },
     ]);
   });
+
+  it('marks 4xx errors about an invalid previous_response_id with a fallback code', async () => {
+    const body = JSON.stringify({
+      error: {
+        message: "Previous response with id 'resp_stale' not found.",
+        type: 'invalid_request_error',
+      },
+    });
+    const fetchImpl = async () => new Response(body, { status: 400 });
+
+    let thrown: unknown;
+    try {
+      await streamQwenResponses({
+        apiKey: 'k',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen-plus',
+        input: 'hello',
+        previousResponseId: 'resp_stale',
+        onDelta: () => {},
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(QwenApiError);
+    expect((thrown as QwenApiError).code).toBe('previous_response_invalid');
+  });
+
+  it('leaves unrelated 4xx errors without a fallback code', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'Invalid API key provided.' } }), {
+        status: 401,
+      });
+
+    let thrown: unknown;
+    try {
+      await streamQwenResponses({
+        apiKey: 'k',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen-plus',
+        input: 'hello',
+        previousResponseId: 'resp_prev',
+        onDelta: () => {},
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(QwenApiError);
+    expect((thrown as QwenApiError).code).toBeUndefined();
+  });
 });
 
 describe('streamQwenChat', () => {

@@ -187,6 +187,165 @@ describe('conversationStore metadata repair', () => {
   });
 });
 
+describe('conversationStore forkedFrom validation', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('keeps a valid forkedFrom field untouched on load', async () => {
+    const forked = {
+      ...conversation({ id: 'fork-1' }),
+      forkedFrom: {
+        conversationId: 'src-1',
+        messageId: 'm2',
+        sourceTitle: '原会话',
+        messageIndex: 2,
+      },
+    };
+    const { mod, data } = await importConversationStore({ conversations: [forked] });
+
+    expect(mod.getConversation('fork-1')).toEqual(forked);
+    expect(data.conversations).toEqual([forked]);
+  });
+
+  it('drops a corrupted forkedFrom field while keeping the conversation and its messages', async () => {
+    const messages = [
+      message({ id: 'm1', role: 'user', status: 'done' }),
+      message({ id: 'm2', role: 'assistant', content: 'reply', status: 'done' }),
+    ];
+    const corrupted = {
+      ...conversation({ id: 'fork-bad', messages }),
+      forkedFrom: {
+        conversationId: 'src-1',
+        messageId: 'm2',
+        sourceTitle: '原会话',
+        messageIndex: '2',
+      },
+    };
+    const { mod, data } = await importConversationStore({ conversations: [corrupted] });
+
+    expect(mod.getConversation('fork-bad')).toEqual(conversation({ id: 'fork-bad', messages }));
+    expect(data.conversations).toEqual([conversation({ id: 'fork-bad', messages })]);
+  });
+
+  it('loads legacy conversations without forkedFrom unchanged', async () => {
+    const legacy = conversation({ id: 'legacy' });
+    const { mod, data } = await importConversationStore({ conversations: [legacy] });
+
+    expect(mod.getConversation('legacy')).toEqual(legacy);
+    expect(data.conversations).toEqual([legacy]);
+  });
+});
+
+describe('conversationStore forkConversation', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  function sourceConversation(): Conversation {
+    return conversation({
+      id: 'src',
+      title: '长对话',
+      messages: [
+        message({ id: 's0', role: 'system', content: 'be nice', status: 'done' }),
+        message({ id: 'm1', role: 'user', content: 'question 1', status: 'done' }),
+        {
+          ...message({ id: 'm2', role: 'assistant', content: 'answer 1', status: 'done' }),
+          usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+          provider: 'responses',
+          providerResponseId: 'resp-1',
+          toolEvents: [
+            { id: 'tool-1', type: 'web_search', status: 'completed', title: 'Web search' },
+          ],
+        },
+        message({ id: 'm3', role: 'user', content: 'question 2', status: 'done' }),
+        message({ id: 'm4', role: 'assistant', content: 'streaming…', status: 'streaming' }),
+      ],
+    });
+  }
+
+  it('forks a new conversation with a deep-copied inclusive prefix and fork metadata', async () => {
+    const source = sourceConversation();
+    const { mod, data } = await importConversationStore({ conversations: [source] });
+
+    const forked = mod.forkConversation('src', 'm2');
+
+    expect(forked.title).toBe('长对话（分叉）');
+    expect(forked.messages).toEqual(source.messages.slice(0, 3));
+    expect(forked.forkedFrom).toEqual({
+      conversationId: 'src',
+      messageId: 'm2',
+      sourceTitle: '长对话',
+      messageIndex: 2,
+    });
+    // Deep copy: mutating the fork must not touch the source messages.
+    forked.messages[2].content = 'mutated';
+    forked.messages[2].toolEvents?.push({
+      id: 'tool-x',
+      type: 'web_search',
+      status: 'failed',
+      title: 'x',
+    });
+    expect(mod.getConversation('src')).toEqual(source);
+    // Persisted at the head of the list, source untouched.
+    expect((data.conversations as Conversation[]).map((c) => c.id)).toEqual([forked.id, 'src']);
+    expect(mod.listConversations()[0].id).toBe(forked.id);
+  });
+
+  it('copies only messages before the fork point when exclusive is set', async () => {
+    const source = sourceConversation();
+    const { mod } = await importConversationStore({ conversations: [source] });
+
+    const forked = mod.forkConversation('src', 'm3', { exclusive: true });
+
+    expect(forked.messages).toEqual(source.messages.slice(0, 3));
+    expect(forked.forkedFrom).toEqual({
+      conversationId: 'src',
+      messageId: 'm3',
+      sourceTitle: '长对话',
+      messageIndex: 3,
+    });
+  });
+
+  it('produces an empty prefix when forking exclusively at the first visible message', async () => {
+    const source = conversation({
+      id: 'src',
+      title: '短对话',
+      messages: [message({ id: 'm1', role: 'user', status: 'done' })],
+    });
+    const { mod } = await importConversationStore({ conversations: [source] });
+
+    const forked = mod.forkConversation('src', 'm1', { exclusive: true });
+
+    expect(forked.messages).toEqual([]);
+    expect(forked.forkedFrom).toEqual({
+      conversationId: 'src',
+      messageId: 'm1',
+      sourceTitle: '短对话',
+      messageIndex: 1,
+    });
+  });
+
+  it('rejects invalid fork points', async () => {
+    const source = sourceConversation();
+    const { mod } = await importConversationStore({ conversations: [source] });
+
+    expect(() => mod.forkConversation('missing', 'm2')).toThrow('Conversation not found: missing');
+    expect(() => mod.forkConversation('src', 'missing')).toThrow('Message not found: missing');
+    expect(() => mod.forkConversation('src', 's0')).toThrow(
+      'Fork point must be a user or assistant message: s0',
+    );
+    expect(() => mod.forkConversation('src', 'm4')).toThrow(
+      'Fork point message must be done: m4',
+    );
+    expect(mod.getConversation('src')).toEqual(source);
+  });
+});
+
 describe('conversationStore metadata updates', () => {
   beforeEach(() => {
     vi.resetModules();

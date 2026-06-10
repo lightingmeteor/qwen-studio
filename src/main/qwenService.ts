@@ -1,4 +1,11 @@
-import type { BuiltInTool, ChatRole, ConnectionDiagnostic, ToolEvent, Usage } from '../shared/types';
+import type {
+  BuiltInTool,
+  ChatErrorCode,
+  ChatRole,
+  ConnectionDiagnostic,
+  ToolEvent,
+  Usage,
+} from '../shared/types';
 import {
   classifyDiagnosticError,
   diagnosticFromStatus,
@@ -66,6 +73,7 @@ export class QwenApiError extends Error {
   status: number;
   body: string;
   detail: string;
+  code?: ChatErrorCode;
   constructor(status: number, body: string) {
     super(friendlyMessage(status, body));
     this.name = 'QwenApiError';
@@ -165,6 +173,21 @@ export function friendlyMessage(status: number, body: string): string {
   if (status === 429) return '请求过于频繁或额度不足（429），请稍后再试。';
   if (status >= 500) return `服务端错误（${status}），请稍后再试。`;
   return `请求失败（${status}）。${truncate(safeBody)}`;
+}
+
+// 启发式识别服务端对失效/过期 previous_response_id 的 4xx 拒绝：
+// 错误体提到 previous_response_id，或 response 不存在/已过期类标识。
+const PREVIOUS_RESPONSE_INVALID_PATTERNS = [
+  /previous[_\s]?response/i,
+  /response\b[^]{0,80}?(not\s+found|does\s+not\s+exist|not\s+exist|expired|invalid)/i,
+];
+
+export function isPreviousResponseInvalidError(status: number, body: string): boolean {
+  return (
+    status >= 400 &&
+    status < 500 &&
+    PREVIOUS_RESPONSE_INVALID_PATTERNS.some((pattern) => pattern.test(body))
+  );
 }
 
 function isAbortError(error: unknown): boolean {
@@ -319,7 +342,11 @@ export async function streamQwenResponses(options: StreamResponsesOptions): Prom
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      throw new QwenApiError(resp.status, text);
+      const error = new QwenApiError(resp.status, text);
+      if (previousResponseId && isPreviousResponseInvalidError(resp.status, text)) {
+        error.code = 'previous_response_invalid';
+      }
+      throw error;
     }
     if (!resp.body) throw new Error('服务没有返回可读取的流，请稍后重试或检查网关配置。');
 
