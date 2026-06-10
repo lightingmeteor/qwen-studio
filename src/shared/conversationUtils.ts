@@ -89,6 +89,13 @@ export function serializeConversationMarkdown(conversation: Conversation): strin
     `Updated: ${formatTimestamp(conversation.updatedAt)}`,
   ];
 
+  if (conversation.forkedFrom) {
+    lines.push(
+      '',
+      `> 分叉自 ${conversation.forkedFrom.sourceTitle} 第 ${conversation.forkedFrom.messageIndex} 条`,
+    );
+  }
+
   const summary = summarizeUsage(conversation.messages);
   if (summary.messageCount > 0) {
     lines.push(

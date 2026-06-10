@@ -13,14 +13,26 @@ type ExportStatus = { tone: 'success' | 'error'; text: string };
 export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
   const conversations = useChatStore((s) => s.conversations);
   const activeId = useChatStore((s) => s.activeId);
+  const selectConversation = useChatStore((s) => s.selectConversation);
   const exportActiveConversationMarkdown = useChatStore((s) => s.exportActiveConversationMarkdown);
   const exportAllConversationsJson = useChatStore((s) => s.exportAllConversationsJson);
   const hasKey = useSettingsStore((s) => s.hasKey);
   const active = conversations.find((c) => c.id === activeId);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // 一次性滚动目标（横幅跳回原会话后定位分叉点消息用），消费后即清空。
+  const scrollTargetRef = useRef<string | null>(null);
   const [exportStatus, setExportStatus] = useState<ExportStatus | null>(null);
 
   useEffect(() => {
+    const targetId = scrollTargetRef.current;
+    if (targetId) {
+      scrollTargetRef.current = null;
+      // 分叉点消息可能已被删除：找不到就只切换会话，不滚动、不报错。
+      document
+        .querySelector(`[data-message-id="${CSS.escape(targetId)}"]`)
+        ?.scrollIntoView({ block: 'center' });
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [active?.messages]);
 
@@ -29,6 +41,17 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
     const timer = window.setTimeout(() => setExportStatus(null), 2400);
     return () => window.clearTimeout(timer);
   }, [exportStatus]);
+
+  const forkedFrom = active?.forkedFrom;
+  const forkSource = forkedFrom
+    ? conversations.find((c) => c.id === forkedFrom.conversationId)
+    : undefined;
+
+  const jumpToForkOrigin = () => {
+    if (!forkedFrom || !forkSource) return;
+    scrollTargetRef.current = forkedFrom.messageId;
+    selectConversation(forkSource.id);
+  };
 
   const isEmpty = !active || active.messages.length === 0;
   const usage = active ? summarizeUsage(active.messages) : null;
@@ -133,12 +156,29 @@ export default function ChatPage({ onOpenSettings }: { onOpenSettings: () => voi
         </div>
       )}
 
+      {forkedFrom &&
+        (forkSource ? (
+          <button
+            onClick={jumpToForkOrigin}
+            className="shrink-0 bg-sky-500/10 px-4 py-1.5 text-left text-xs text-sky-200/90 hover:bg-sky-500/20 hover:text-sky-100"
+            title="跳回原会话并定位到分叉点"
+          >
+            分叉自 {forkSource.title} 第 {forkedFrom.messageIndex} 条
+          </button>
+        ) : (
+          <div className="shrink-0 bg-white/5 px-4 py-1.5 text-xs text-white/40">
+            分叉自 {forkedFrom.sourceTitle} 第 {forkedFrom.messageIndex} 条
+          </div>
+        ))}
+
       {isEmpty ? (
         <WelcomeState hasKey={hasKey} onOpenSettings={onOpenSettings} />
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {active!.messages.map((m) => (
-            <MessageBubble key={m.id} message={m} />
+            <div key={m.id} data-message-id={m.id}>
+              <MessageBubble message={m} />
+            </div>
           ))}
           <div ref={bottomRef} />
         </div>

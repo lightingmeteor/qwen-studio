@@ -40,11 +40,16 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
   const regenerate = useChatStore((s) => s.regenerate);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const editAndResend = useChatStore((s) => s.editAndResend);
+  const fork = useChatStore((s) => s.fork);
+  const forkAndResend = useChatStore((s) => s.forkAndResend);
   const streaming = useChatStore((s) =>
     s.activeId ? Boolean(s.streamingByConversation[s.activeId]) : false,
   );
   const isUser = message.role === 'user';
   const toolEvents = isUser ? [] : (message.toolEvents ?? []);
+  // 与主进程 forkConversation 的校验一致：仅 done 状态的 user/assistant 消息可分叉。
+  const forkable =
+    (message.role === 'user' || message.role === 'assistant') && message.status === 'done';
 
   const copy = async () => {
     await navigator.clipboard.writeText(message.content);
@@ -75,6 +80,26 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           conversation.messages.some((item) => item.id === message.id),
         );
       if (originalMessageStillExists) {
+        setEditError('无法发送，请检查 API Key 或当前生成状态。');
+        return;
+      }
+      setEditing(false);
+    } catch (error) {
+      console.error(error);
+      setEditError('无法发送，请检查 API Key 或当前生成状态。');
+    }
+  };
+
+  const submitForkAndResend = async () => {
+    const content = draft.trim();
+    if (!content) return;
+    setEditError('');
+
+    try {
+      const previousActiveId = useChatStore.getState().activeId;
+      await forkAndResend(message.id, content);
+      // forkAndResend 在无 Key / 正在生成时静默返回，不会切换会话。
+      if (useChatStore.getState().activeId === previousActiveId) {
         setEditError('无法发送，请检查 API Key 或当前生成状态。');
         return;
       }
@@ -138,11 +163,20 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
                 取消
               </button>
               <button
+                onClick={() => void submitForkAndResend()}
+                disabled={!draft.trim()}
+                title="在分叉出的新会话中发送，当前会话保持不变"
+                className="rounded border border-sky-300/40 px-2 py-1 text-sky-200/90 hover:bg-sky-500/20 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                分叉后发送
+              </button>
+              <button
                 onClick={() => void submitEdit()}
                 disabled={!draft.trim()}
+                title="截断该消息及之后内容并原地重发"
                 className="rounded bg-sky-500/80 px-2 py-1 text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                发送
+                重新发送
               </button>
             </div>
           </div>
@@ -216,6 +250,15 @@ export default function MessageBubble({ message }: { message: ChatMessage }): JS
           {isUser && !streaming && !editing && (
             <button onClick={startEdit} className="hover:text-white/90">
               编辑
+            </button>
+          )}
+          {forkable && (
+            <button
+              onClick={() => void fork(message.id).catch(console.error)}
+              className="hover:text-white/90"
+              title="从该消息处分叉出新会话，当前会话保持不变"
+            >
+              从这里分叉
             </button>
           )}
           {!streaming && (
