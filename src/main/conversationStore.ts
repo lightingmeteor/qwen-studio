@@ -422,7 +422,7 @@ export function forkConversation(
       messageIndex,
     },
   };
-  store.set('conversations', [forked, ...conversations]);
+  writeConversations([forked, ...conversations]);
   return forked;
 }
 
