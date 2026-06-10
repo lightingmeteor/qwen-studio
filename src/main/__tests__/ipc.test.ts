@@ -22,6 +22,7 @@ const convoMock = vi.hoisted(() => ({
   setConversationPinned: vi.fn(() => ({ ...conversation, pinned: true })),
   setConversationArchived: vi.fn(() => ({ ...conversation, archived: true })),
   getConversation: vi.fn(() => conversation),
+  forkConversation: vi.fn(() => ({ ...conversation, id: 'fork-1', title: 'Conversation c1（分叉）' })),
 }));
 
 const exportMock = vi.hoisted(() => ({
@@ -225,6 +226,34 @@ describe('conversation IPC handlers', () => {
         toolEvents: [validToolEvent],
       },
     ]);
+  });
+
+  it('forks a conversation through the store and returns the new conversation', async () => {
+    await importIpc();
+
+    expect(await handlers.get('convo:fork')?.({}, 'c1', 'm2')).toMatchObject({
+      id: 'fork-1',
+      title: 'Conversation c1（分叉）',
+    });
+    expect(convoMock.forkConversation).toHaveBeenCalledWith('c1', 'm2', {});
+
+    await handlers.get('convo:fork')?.({}, 'c1', 'm2', { exclusive: true });
+    expect(convoMock.forkConversation).toHaveBeenLastCalledWith('c1', 'm2', { exclusive: true });
+  });
+
+  it('validates fork inputs before touching the store', async () => {
+    await importIpc();
+
+    expect(() => handlers.get('convo:fork')?.({}, '', 'm2')).toThrow(
+      'sourceId must be a non-empty string',
+    );
+    expect(() => handlers.get('convo:fork')?.({}, 'c1', '')).toThrow(
+      'messageId must be a non-empty string',
+    );
+    expect(() => handlers.get('convo:fork')?.({}, 'c1', 'm2', { exclusive: 'true' })).toThrow(
+      'exclusive must be a boolean',
+    );
+    expect(convoMock.forkConversation).not.toHaveBeenCalled();
   });
 
   it('exports by looking up conversations in main and never accepting renderer output paths', async () => {
@@ -437,6 +466,39 @@ describe('chat IPC errors', () => {
     const payload = sender.send.mock.calls[0][1] as { detail: string };
     expect(payload.detail).not.toContain(secret);
     expect(payload.detail.length).toBeLessThanOrEqual(1000);
+  });
+
+  it('forwards the previous_response_invalid error code to the renderer', async () => {
+    const error = new Error('上下文已失效') as Error & { code: string };
+    error.code = 'previous_response_invalid';
+    llmProviderMock.streamTurn.mockRejectedValue(error);
+    const sender = {
+      id: 1,
+      isDestroyed: vi.fn(() => false),
+      send: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+    };
+    await importIpc();
+
+    await handlers.get('chat:stream')?.(
+      { sender },
+      {
+        requestId: 'req-1',
+        conversationId: 'c1',
+        apiMode: 'responses',
+        previousResponseId: 'resp-stale',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(sender.send).toHaveBeenCalledWith(
+      'chat:error',
+      expect.objectContaining({
+        requestId: 'req-1',
+        code: 'previous_response_invalid',
+      }),
+    );
   });
 });
 

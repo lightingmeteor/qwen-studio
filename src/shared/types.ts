@@ -35,6 +35,17 @@ export interface ChatMessage {
   toolEvents?: ToolEvent[];
 }
 
+export interface ForkOrigin {
+  /** 原会话 id，用于跳回。 */
+  conversationId: string;
+  /** 分叉点消息 id，用于跳回后定位。 */
+  messageId: string;
+  /** 分叉时原会话标题快照，原会话被删后用于降级展示。 */
+  sourceTitle: string;
+  /** 分叉时消息序号快照（1-based，按 user/assistant 可见消息计）。 */
+  messageIndex: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -43,6 +54,7 @@ export interface Conversation {
   updatedAt: number;
   pinned?: boolean;
   archived?: boolean;
+  forkedFrom?: ForkOrigin;
 }
 
 export interface UsageSummary extends Usage {
@@ -87,7 +99,13 @@ export interface ChatUsageEvent { requestId: string; usage: Usage; }
 export interface ChatResponseEvent { requestId: string; responseId: string; }
 export interface ChatToolEvent { requestId: string; event: ToolEvent; }
 export interface ChatDoneEvent { requestId: string; aborted?: boolean; }
-export interface ChatErrorEvent { requestId: string; message: string; detail?: string; }
+export type ChatErrorCode = 'previous_response_invalid';
+export interface ChatErrorEvent {
+  requestId: string;
+  message: string;
+  detail?: string;
+  code?: ChatErrorCode;
+}
 
 export type DiagnosticCategory =
   | 'ok'

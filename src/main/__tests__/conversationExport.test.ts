@@ -15,6 +15,7 @@ function conversation(overrides: Partial<Conversation> & Pick<Conversation, 'id'
     updatedAt: overrides.updatedAt ?? Date.UTC(2026, 5, 4, 10, 5, 0),
     ...(overrides.pinned === undefined ? {} : { pinned: overrides.pinned }),
     ...(overrides.archived === undefined ? {} : { archived: overrides.archived }),
+    ...(overrides.forkedFrom === undefined ? {} : { forkedFrom: overrides.forkedFrom }),
   };
 }
 
@@ -65,6 +66,40 @@ describe('exportConversationMarkdown', () => {
       'utf-8',
     );
   });
+
+  it('adds a fork-origin note to the Markdown header for forked conversations', async () => {
+    const testDeps = deps({ canceled: false, filePath: '/tmp/forked.md' });
+
+    await exportConversationMarkdown(
+      conversation({
+        id: 'c2',
+        title: '排错记录（分叉）',
+        messages: [{ id: 'm1', role: 'user', content: 'Hello', createdAt: 100, status: 'done' }],
+        forkedFrom: {
+          conversationId: 'c1',
+          messageId: 'm-source',
+          sourceTitle: '排错记录',
+          messageIndex: 10,
+        },
+      }),
+      testDeps,
+    );
+
+    expect(testDeps.writeFile).toHaveBeenCalledWith(
+      '/tmp/forked.md',
+      expect.stringContaining('> 分叉自 排错记录 第 10 条'),
+      'utf-8',
+    );
+  });
+
+  it('omits the fork-origin note for conversations without forkedFrom', async () => {
+    const testDeps = deps({ canceled: false, filePath: '/tmp/plain.md' });
+
+    await exportConversationMarkdown(conversation({ id: 'c1', title: 'Plain' }), testDeps);
+
+    const written = vi.mocked(testDeps.writeFile).mock.calls[0][1];
+    expect(written).not.toContain('分叉自');
+  });
 });
 
 describe('exportConversationsJson', () => {
@@ -90,5 +125,33 @@ describe('exportConversationsJson', () => {
       )}\n`,
       'utf-8',
     );
+  });
+
+  it('carries forkedFrom through the JSON export with envelope version 1', async () => {
+    const testDeps = deps({ canceled: false, filePath: '/tmp/forked.json' });
+    const forked = conversation({
+      id: 'fork',
+      forkedFrom: {
+        conversationId: 'origin',
+        messageId: 'm-source',
+        sourceTitle: '原会话',
+        messageIndex: 3,
+      },
+    });
+
+    await exportConversationsJson([forked], testDeps);
+
+    const written = vi.mocked(testDeps.writeFile).mock.calls[0][1];
+    const parsed = JSON.parse(written) as {
+      version: number;
+      conversations: Conversation[];
+    };
+    expect(parsed.version).toBe(1);
+    expect(parsed.conversations[0].forkedFrom).toEqual({
+      conversationId: 'origin',
+      messageId: 'm-source',
+      sourceTitle: '原会话',
+      messageIndex: 3,
+    });
   });
 });

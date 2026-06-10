@@ -16,6 +16,7 @@ import { testQwenConnection } from './qwenService';
 import {
   hasUnresolvedBaseUrlTemplate,
   type ChatStreamRequest,
+  type ChatErrorCode,
   type ChatMessage,
   type ApiMode,
   type BuiltInTool,
@@ -345,6 +346,19 @@ function validateChatStreamRequest(value: unknown): ChatStreamRequest {
   return request;
 }
 
+function validateForkOptions(value: unknown): { exclusive?: boolean } {
+  if (value === undefined) return {};
+
+  const input = requireRecord(value, 'fork options');
+  const options: { exclusive?: boolean } = {};
+
+  if (hasOwn(input, 'exclusive') && input.exclusive !== undefined) {
+    options.exclusive = requireBoolean(input.exclusive, 'exclusive');
+  }
+
+  return options;
+}
+
 function getUsableRequestId(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined;
   return typeof value.requestId === 'string' && value.requestId.length > 0
@@ -366,6 +380,11 @@ function safeSend(sender: WebContents, channel: string, payload: unknown): void 
 function detailFromError(error: unknown): string | undefined {
   if (!isRecord(error)) return undefined;
   return typeof error.detail === 'string' ? sanitizeDiagnosticDetail(error.detail) : undefined;
+}
+
+function codeFromError(error: unknown): ChatErrorCode | undefined {
+  if (!isRecord(error)) return undefined;
+  return error.code === 'previous_response_invalid' ? error.code : undefined;
 }
 
 function isDifferentBaseUrl(candidate: string | undefined, saved: string): boolean {
@@ -449,6 +468,14 @@ export function registerIpc(): void {
   });
   ipcMain.handle('convo:delete', (_e, rawId: unknown) =>
     convo.deleteConversation(requireNonEmptyString(rawId, 'id')),
+  );
+  ipcMain.handle(
+    'convo:fork',
+    (_e, rawSourceId: unknown, rawMessageId: unknown, rawOptions?: unknown) => {
+      const sourceId = requireNonEmptyString(rawSourceId, 'sourceId');
+      const messageId = requireNonEmptyString(rawMessageId, 'messageId');
+      return convo.forkConversation(sourceId, messageId, validateForkOptions(rawOptions));
+    },
   );
   ipcMain.handle('convo:saveMessages', (_e, rawId: unknown, rawMessages: unknown) => {
     const id = requireNonEmptyString(rawId, 'id');
@@ -572,10 +599,12 @@ export function registerIpc(): void {
         });
       } else {
         const message = err instanceof Error ? err.message : '未知错误';
+        const code = codeFromError(err);
         safeSend(event.sender, 'chat:error', {
           requestId: payload.requestId,
           message,
           detail: detailFromError(err),
+          ...(code ? { code } : {}),
         });
         logError('chat.stream.error', {
           requestId: payload.requestId,

@@ -96,6 +96,13 @@ export function serializeConversationMarkdown(conversation: Conversation): strin
     );
   }
 
+  if (conversation.forkedFrom) {
+    lines.push(
+      '',
+      `> 分叉自 ${conversation.forkedFrom.sourceTitle} 第 ${conversation.forkedFrom.messageIndex} 条`,
+    );
+  }
+
   for (const message of conversation.messages) {
     lines.push('', `## ${formatRole(message.role)}`, '', `Created: ${formatTimestamp(message.createdAt)}`);
 
