@@ -66,6 +66,7 @@ function installFakeBridge(): {
   saveMessagesCalls: Array<{ conversationId: string; messages: ChatMessage[] }>;
   pinnedCalls: Array<{ id: string; pinned: boolean }>;
   archivedCalls: Array<{ id: string; archived: boolean }>;
+  renameCalls: Array<{ id: string; title: string }>;
   exportMarkdownCalls: string[];
   exportJsonCalls: number;
   abortChatCalls: string[];
@@ -83,6 +84,7 @@ function installFakeBridge(): {
   const saveMessagesCalls: Array<{ conversationId: string; messages: ChatMessage[] }> = [];
   const pinnedCalls: Array<{ id: string; pinned: boolean }> = [];
   const archivedCalls: Array<{ id: string; archived: boolean }> = [];
+  const renameCalls: Array<{ id: string; title: string }> = [];
   const exportMarkdownCalls: string[] = [];
   let exportJsonCalls = 0;
   const abortChatCalls: string[] = [];
@@ -115,7 +117,13 @@ function installFakeBridge(): {
       conversations.unshift(conversation);
       return conversation;
     },
-    renameConversation: async () => {},
+    renameConversation: async (id, title) => {
+      renameCalls.push({ id, title });
+      const conversation = conversations.find((item) => item.id === id);
+      if (conversation) {
+        conversation.title = title;
+      }
+    },
     deleteConversation: async () => {},
     forkConversation: async (sourceId, messageId, opts) => {
       forkCalls.push({ sourceId, messageId, opts });
@@ -226,6 +234,7 @@ function installFakeBridge(): {
     saveMessagesCalls,
     pinnedCalls,
     archivedCalls,
+    renameCalls,
     exportMarkdownCalls,
     get exportJsonCalls() {
       return exportJsonCalls;
@@ -424,6 +433,19 @@ describe('chatStore streaming routing', () => {
     expect(fake.saveMessagesCalls.at(-1)?.messages[1]).toMatchObject({
       toolEvents: [toolEvent],
     });
+  });
+
+  it('preserves a manually renamed empty conversation when sending the first message', async () => {
+    const fake = installFakeBridge();
+
+    await useChatStore.getState().newConversation();
+    const conversationId = useChatStore.getState().activeId!;
+    await useChatStore.getState().renameConversation(conversationId, '手动标题');
+    await useChatStore.getState().sendMessage('first message should not replace the title');
+
+    expect(fake.renameCalls).toEqual([{ id: conversationId, title: '手动标题' }]);
+    expect(useChatStore.getState().conversations[0].title).toBe('手动标题');
+    expect(fake.conversations[0].title).toBe('手动标题');
   });
 
   it('pins a conversation through the bridge and updates local state', async () => {

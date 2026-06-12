@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { filterConversations } from '../../shared/conversationUtils';
 import { useChatStore } from '../store/chatStore';
 
@@ -23,10 +23,20 @@ export default function Sidebar({ onOpenSettings }: { onOpenSettings: () => void
   } = useChatStore();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SidebarFilter>('all');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const skipRenameBlurRef = useRef(false);
   const visibleConversations = useMemo(
     () => filterConversations(conversations, { filter, query }),
     [conversations, filter, query],
   );
+
+  useEffect(() => {
+    if (!editingId) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [editingId]);
 
   const emptyText = query.trim()
     ? '没有匹配的会话。'
@@ -35,6 +45,41 @@ export default function Sidebar({ onOpenSettings }: { onOpenSettings: () => void
       : filter === 'archived'
         ? '归档里还没有会话。'
         : '还没有会话，点上面新建一个。';
+
+  const startRename = (conversation: { id: string; title: string }) => {
+    skipRenameBlurRef.current = false;
+    setEditingId(conversation.id);
+    setDraftTitle(conversation.title);
+  };
+
+  const cancelRename = () => {
+    skipRenameBlurRef.current = true;
+    setEditingId(null);
+    setDraftTitle('');
+  };
+
+  const commitRename = (id: string, currentTitle: string) => {
+    const title = draftTitle.trim();
+    skipRenameBlurRef.current = true;
+    cancelRename();
+    if (title && title !== currentTitle) {
+      void renameConversation(id, title);
+    }
+  };
+
+  const onRenameKeyDown = (
+    event: KeyboardEvent<HTMLInputElement>,
+    id: string,
+    currentTitle: string,
+  ) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitRename(id, currentTitle);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelRename();
+    }
+  };
 
   return (
     <aside className="w-64 shrink-0 border-r border-white/10 flex flex-col bg-black/20">
@@ -70,65 +115,90 @@ export default function Sidebar({ onOpenSettings }: { onOpenSettings: () => void
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
-        {visibleConversations.map((c) => (
-          <div
-            key={c.id}
-            onClick={() => selectConversation(c.id)}
-            className={`group flex min-w-0 items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer ${
-              c.id === activeId ? 'bg-white/15' : 'hover:bg-white/5'
-            }`}
-          >
-            <span className="min-w-0 truncate flex-1">
-              {c.pinned && !c.archived ? <span className="mr-1 text-white/40">★</span> : null}
-              {c.title}
-            </span>
-            <span className="hidden group-hover:flex gap-1 ml-2 shrink-0">
-              {!c.archived && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void setConversationPinned(c.id, !c.pinned);
+        {visibleConversations.map((c) => {
+          const isEditing = editingId === c.id;
+
+          return (
+            <div
+              key={c.id}
+              onClick={() => {
+                if (!isEditing) selectConversation(c.id);
+              }}
+              className={`group flex min-w-0 items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                isEditing ? 'cursor-default bg-white/10' : 'cursor-pointer'
+              } ${c.id === activeId ? 'bg-white/15' : 'hover:bg-white/5'}`}
+            >
+              {isEditing ? (
+                <input
+                  ref={renameInputRef}
+                  value={draftTitle}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  onBlur={() => {
+                    if (skipRenameBlurRef.current) {
+                      skipRenameBlurRef.current = false;
+                      return;
+                    }
+                    commitRename(c.id, c.title);
                   }}
-                  className="w-5 text-white/40 hover:text-amber-200"
-                  title={c.pinned ? '取消置顶' : '置顶'}
-                >
-                  {c.pinned ? '☆' : '★'}
-                </button>
+                  onKeyDown={(e) => onRenameKeyDown(e, c.id, c.title)}
+                  className="min-w-0 flex-1 rounded border border-sky-400/50 bg-black/30 px-2 py-1 text-xs text-white outline-none"
+                />
+              ) : (
+                <span className="min-w-0 truncate flex-1">
+                  {c.pinned && !c.archived ? <span className="mr-1 text-white/40">★</span> : null}
+                  {c.title}
+                </span>
               )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void setConversationArchived(c.id, !c.archived);
-                }}
-                className="w-5 text-white/40 hover:text-white/80"
-                title={c.archived ? '恢复' : '归档'}
-              >
-                {c.archived ? '↩' : '收'}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const title = window.prompt('重命名会话', c.title);
-                  if (title) void renameConversation(c.id, title);
-                }}
-                className="text-white/40 hover:text-white/80"
-                title="重命名"
-              >
-                ✎
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (window.confirm('删除该会话？')) void deleteConversation(c.id);
-                }}
-                className="text-white/40 hover:text-red-300"
-                title="删除"
-              >
-                删
-              </button>
-            </span>
-          </div>
-        ))}
+              {!isEditing && (
+                <span className="hidden group-hover:flex gap-1 ml-2 shrink-0">
+                  {!c.archived && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void setConversationPinned(c.id, !c.pinned);
+                      }}
+                      className="w-5 text-white/40 hover:text-amber-200"
+                      title={c.pinned ? '取消置顶' : '置顶'}
+                    >
+                      {c.pinned ? '☆' : '★'}
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void setConversationArchived(c.id, !c.archived);
+                    }}
+                    className="w-5 text-white/40 hover:text-white/80"
+                    title={c.archived ? '恢复' : '归档'}
+                  >
+                    {c.archived ? '↩' : '收'}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(c);
+                    }}
+                    className="w-5 text-white/40 hover:text-white/80"
+                    title="重命名"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm('删除该会话？')) void deleteConversation(c.id);
+                    }}
+                    className="text-white/40 hover:text-red-300"
+                    title="删除"
+                  >
+                    删
+                  </button>
+                </span>
+              )}
+            </div>
+          );
+        })}
         {visibleConversations.length === 0 && (
           <div className="text-xs text-white/30 px-3 py-4">{emptyText}</div>
         )}

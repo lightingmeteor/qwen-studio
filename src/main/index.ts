@@ -4,6 +4,9 @@ import { pathToFileURL } from 'url';
 import { registerIpc } from './ipc';
 import { normalizeExternalUrl } from '../shared/externalLinks';
 import { logError, logInfo, logWarn } from './logger';
+import { configureLinuxPasswordStore } from './linuxPasswordStore';
+
+configureLinuxPasswordStore();
 
 function openSafeExternal(rawUrl: string): void {
   const url = normalizeExternalUrl(rawUrl);

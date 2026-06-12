@@ -18,6 +18,7 @@ const routing = new Map<string, { conversationId: string; messageId: string }>()
 // Requests sent with previous_response_id; eligible for a single full-history fallback retry.
 const requestsWithPreviousResponseId = new Set<string>();
 const CHAT_BRIDGE_UNSUBSCRIBERS_KEY = '__qwenStudioChatBridgeUnsubscribers' as const;
+const DEFAULT_CONVERSATION_TITLE = '新会话';
 
 type ChatBridgeGlobal = typeof globalThis & {
   [CHAT_BRIDGE_UNSUBSCRIBERS_KEY]?: Array<() => void>;
@@ -337,7 +338,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         userMsg,
         assistantMsg,
       ]);
-      if (isFirst) {
+      if (isFirst && conv.title === DEFAULT_CONVERSATION_TITLE) {
         const title = deriveTitle(content);
         conversations = conversations.map((c) => (c.id === conversationId ? { ...c, title } : c));
         void window.qwen.renameConversation(conversationId!, title);

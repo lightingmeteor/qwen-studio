@@ -6,7 +6,8 @@
   "author": "qwen-studio",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
+    "postinstall": "node scripts/install-electron.mjs",
+    "dev": "node scripts/dev-electron.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
