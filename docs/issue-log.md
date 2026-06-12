@@ -30,6 +30,20 @@
 - 修复：设置和会话读取增加修复逻辑，丢弃非法可选字段并保留可用消息。
 - 相关记录：`1436241 fix: repair malformed settings and tool keys`
 
+### 老会话 Responses 续聊时 previous_response_id 过期直接报错
+
+- 现象：Responses 模式下隔较久继续老会话（或在分叉会话中续聊）时，服务端可能已回收 `previous_response_id` 对应的上下文，请求被 4xx 拒绝。
+- 影响：用户只能看到原始错误，需要手动想办法绕开。
+- 修复：主进程识别该类失效错误并标记 `previous_response_invalid`；renderer 对带过 id 的请求自动重试一次，改为不带 id 的全量历史重发，最多重试一次不循环。
+- 相关记录：`90fe306 feat: add conversation forking backend (store/ipc/chat actions)`
+
+### forkConversation 写盘绕过会话缓存
+
+- 现象：分叉功能与会话持久化缓存（PR #4）并行开发，合并后 `forkConversation` 仍直接写盘，没有走 `writeConversations` 更新内存缓存。
+- 影响：分叉后立即读取会话列表会拿到旧数据（合并前被测试发现，未流入发布版本）。
+- 修复：`forkConversation` 的写入统一改走 `writeConversations`。
+- 相关记录：`80f6b2c fix: route forkConversation writes through writeConversations cache`
+
 ## 后续排查规则
 
 - 新 bug 先记录现象、影响、触发条件和修复方式，再合入代码。

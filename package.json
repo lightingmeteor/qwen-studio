@@ -1,6 +1,6 @@
 {
   "name": "qwen-studio",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Qwen Studio-like desktop chat client",
   "main": "out/main/index.js",
   "author": "qwen-studio",
