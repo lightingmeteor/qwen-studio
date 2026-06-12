@@ -39,4 +39,4 @@
 ## 7. 验证
 
 - [x] 7.1 `npm test`、`npm run typecheck`、`npm run build` 全部通过（165 tests / 13 files，typecheck 与 build 干净）
-- [ ] 7.2 手动冒烟：分叉、横幅跳回与定位、原会话删除后降级、编辑后两种发送方式、Chat Completions 与 Responses 两种模式下分叉续聊
+- [x] 7.2 手动冒烟：分叉、横幅跳回与定位、原会话删除后降级、编辑后两种发送方式、Chat Completions 与 Responses 两种模式下分叉续聊（用户于 2026-06-12 在本机验证通过）

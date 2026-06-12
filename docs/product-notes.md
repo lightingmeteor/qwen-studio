@@ -11,6 +11,7 @@ Qwen Studio Desktop 是一个本地桌面聊天客户端，面向日常使用 Qw
 - 在本机保存设置和会话历史，API Key 由 Electron 主进程通过 `safeStorage` 加密保存。
 - 提供连接测试，帮助定位 API Key、地域、Base URL、模型、网络和超时问题。
 - 支持当前会话 Markdown 导出、全部会话 JSON 导出，以及 tokens usage 汇总。
+- 支持从任意已完成消息分叉出新会话：原会话不变，分叉会话可跳回来源；编辑重发提供原地与分叉两种方式。
 
 ## 这个产品不做什么
 
